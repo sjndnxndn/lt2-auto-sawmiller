@@ -1,5 +1,5 @@
--- LT2 Cut Diagnostic v14
--- Auto-removes water, tries every payload variation.
+-- LT2 Cut Diagnostic v15
+-- Smart teleport (ground-aware), robust axe lookup, payload sweeps.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,14 +11,18 @@ local Interaction = ReplicatedStorage:WaitForChild("Interaction")
 local RemoteProxy = Interaction:WaitForChild("RemoteProxy")
 
 local CONFIG = {
-    MIN_HP      = 40,
-    TAP_RADIUS  = 8,
-    BURST_DELAY = 1.0,
-    TELEPORT_SETTLE = 0.3,
+    MIN_HP            = 40,
+    TAP_RADIUS        = 8,
+    BURST_DELAY       = 1.0,
+    TELEPORT_SETTLE   = 0.35,
+    TELEPORT_ENABLED  = true,
+    TP_SIDE_OFFSET    = 4,     -- horizontal studs from plank center
+    TP_GROUND_MARGIN  = 3,     -- how high above ground to stand
+    TP_MAX_GROUND_GAP = 8,     -- if ground is farther than this below plank base, float instead
 }
 
 -- ============================================================
---  GODMODE (HP reset + optional metatable hook)
+--  GODMODE
 -- ============================================================
 local godConn
 local function applyGod()
@@ -38,14 +42,13 @@ LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.5); stopGod(); applyGod()
 end)
 
--- Optional: block TakeDamage via metatable if executor supports it
 pcall(function()
     local mt = getrawmetatable(game)
     local old = mt.__namecall
     setreadonly(mt, false)
     mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if method == "TakeDamage" and self:IsA("Humanoid")
+        local m = getnamecallmethod()
+        if m == "TakeDamage" and self:IsA("Humanoid")
            and self:IsDescendantOf(LocalPlayer.Character) then
             return 0
         end
@@ -59,23 +62,21 @@ end)
 -- ============================================================
 local function nukeWater()
     local count = 0
-    local terms = {"water", "swamp", "ocean", "river", "lake", "sea", "damagezone", "hazard"}
+    local terms = {"water","swamp","ocean","river","lake","sea","damagezone","hazard"}
     local snap = {}
-    for _, d in ipairs(workspace:GetDescendants()) do
-        table.insert(snap, d)
-    end
+    for _, d in ipairs(workspace:GetDescendants()) do table.insert(snap, d) end
     for _, d in ipairs(snap) do
         if d and d.Parent then
-            local kind = d:IsA("BasePart") or d:IsA("Folder") or d:IsA("Model") or d:IsA("TrussPart")
+            local kind = d:IsA("BasePart") or d:IsA("Folder")
+                      or d:IsA("Model") or d:IsA("TrussPart")
             if kind then
                 local n = d.Name:lower()
-                local hit = false
                 for _, t in ipairs(terms) do
-                    if n:find(t) then hit = true; break end
-                end
-                if hit then
-                    pcall(function() d:Destroy() end)
-                    count = count + 1
+                    if n:find(t) then
+                        pcall(function() d:Destroy() end)
+                        count = count + 1
+                        break
+                    end
                 end
             end
         end
@@ -83,17 +84,16 @@ local function nukeWater()
     return count
 end
 
--- Run on load
 task.spawn(function()
     local n = nukeWater()
-    print("[v14] Water removed:", n, "objects")
+    print("[v15] Water removed:", n)
 end)
 
 -- ============================================================
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag14"
+sg.Name = "LT2_CutDiag15"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -110,7 +110,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v14"
+title.Text = "LT2 Cut Diagnostic v15 - smart teleport"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -131,17 +131,17 @@ local function mkBtn(text, x, y, w, h, color)
     return b
 end
 
--- Row 1
-local listBtn   = mkBtn("List",        4,   32, 50, 30, Color3.fromRGB(60, 120, 200))
-local copyBtn   = mkBtn("Copy",        58,  32, 50, 30, Color3.fromRGB(60, 180, 100))
-local clearBtn  = mkBtn("Clear",       112, 32, 50, 30, Color3.fromRGB(150, 80, 80))
-local waterBtn  = mkBtn("Nuke H2O",    166, 32, 70, 30, Color3.fromRGB(60, 160, 200))
-local stopBtn   = mkBtn("STOP",        240, 32, 50, 30, Color3.fromRGB(200, 50, 50))
-local toBpBtn   = mkBtn("To BP",       294, 32, 55, 30, Color3.fromRGB(200, 140, 50))
+local listBtn   = mkBtn("List",      4,   32, 50, 30, Color3.fromRGB(60, 120, 200))
+local copyBtn   = mkBtn("Copy",      58,  32, 50, 30, Color3.fromRGB(60, 180, 100))
+local clearBtn  = mkBtn("Clear",     112, 32, 50, 30, Color3.fromRGB(150, 80, 80))
+local waterBtn  = mkBtn("Nuke H2O",  166, 32, 70, 30, Color3.fromRGB(60, 160, 200))
+local stopBtn   = mkBtn("STOP",      240, 32, 50, 30, Color3.fromRGB(200, 50, 50))
+local tpBtn     = mkBtn("TP: ON",    294, 32, 60, 30, Color3.fromRGB(60, 140, 100))
+local toBpBtn   = mkBtn("To BP",     358, 32, 55, 30, Color3.fromRGB(200, 140, 50))
 
 local axeInfo = Instance.new("TextLabel")
-axeInfo.Size = UDim2.new(1, -355, 0, 30)
-axeInfo.Position = UDim2.new(0, 355, 0, 32)
+axeInfo.Size = UDim2.new(1, -420, 0, 30)
+axeInfo.Position = UDim2.new(0, 420, 0, 32)
 axeInfo.BackgroundTransparency = 1
 axeInfo.Text = "axe: ?"
 axeInfo.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -154,46 +154,23 @@ local lbl2 = Instance.new("TextLabel")
 lbl2.Size = UDim2.new(1, -8, 0, 18)
 lbl2.Position = UDim2.new(0, 4, 0, 66)
 lbl2.BackgroundTransparency = 1
-lbl2.Text = "Payload tests (all pick largest plank automatically):"
+lbl2.Text = "Payload tests (auto-teleports to plank unless TP is OFF):"
 lbl2.TextColor3 = Color3.fromRGB(200, 200, 200)
 lbl2.TextSize = 11
 lbl2.Font = Enum.Font.SourceSansBold
 lbl2.TextXAlignment = Enum.TextXAlignment.Left
 lbl2.Parent = frame
 
--- Row 2
 local v_exact = mkBtn("Exact",     4,   86, 90, 26, Color3.fromRGB(70, 130, 90))
 local v_sweep = mkBtn("Sweep h",   98,  86, 90, 26, Color3.fromRGB(70, 90, 130))
 local v_dirs  = mkBtn("Face dirs", 192, 86, 90, 26, Color3.fromRGB(70, 90, 130))
 local v_sect  = mkBtn("Sections",  286, 86, 90, 26, Color3.fromRGB(70, 90, 130))
-local v_equip = mkBtn("Equipped",  380, 86, 90, 26, Color3.fromRGB(140, 90, 130))
+local v_tp    = mkBtn("Just TP",   380, 86, 90, 26, Color3.fromRGB(200, 140, 60))
 local v_all   = mkBtn("TRY ALL",   474, 86, 100, 26, Color3.fromRGB(200, 60, 60))
-
-local lbl3 = Instance.new("TextLabel")
-lbl3.Size = UDim2.new(1, -8, 0, 18)
-lbl3.Position = UDim2.new(0, 4, 0, 116)
-lbl3.BackgroundTransparency = 1
-lbl3.Text = "Reference payload used:"
-lbl3.TextColor3 = Color3.fromRGB(200, 200, 200)
-lbl3.TextSize = 11
-lbl3.Font = Enum.Font.SourceSansBold
-lbl3.TextXAlignment = Enum.TextXAlignment.Left
-lbl3.Parent = frame
-
-local refVal = Instance.new("TextLabel")
-refVal.Size = UDim2.new(1, -8, 0, 18)
-refVal.Position = UDim2.new(0, 4, 0, 134)
-refVal.BackgroundTransparency = 1
-refVal.Text = "h=1.5217 face=(1,0,0) cd=0.237 hp=1.2 sect=1"
-refVal.TextColor3 = Color3.fromRGB(150, 200, 150)
-refVal.TextSize = 10
-refVal.Font = Enum.Font.Code
-refVal.TextXAlignment = Enum.TextXAlignment.Left
-refVal.Parent = frame
 
 local logBox = Instance.new("ScrollingFrame")
 logBox.Size = UDim2.new(1, -10, 1, -290)
-logBox.Position = UDim2.new(0, 5, 0, 158)
+logBox.Position = UDim2.new(0, 5, 0, 122)
 logBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 6
@@ -263,23 +240,27 @@ local function toolRealName(tool)
     return tool.Name
 end
 
---- Find axe in Backpack or Character.
+--- Search broadly: Backpack, Tools folder, Character, and Player itself.
 local function findAxe()
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        for _, d in ipairs(bp:GetChildren()) do
-            if d:IsA("Tool") then
-                local rn = (toolRealName(d) or ""):lower()
-                if rn:find("axe") or rn:find("hatchet") then return d end
-            end
-        end
-    end
-    local c = LocalPlayer.Character
-    if c then
-        for _, d in ipairs(c:GetChildren()) do
-            if d:IsA("Tool") then
-                local rn = (toolRealName(d) or ""):lower()
-                if rn:find("axe") or rn:find("hatchet") then return d end
+    local containers = {
+        LocalPlayer:FindFirstChild("Backpack"),
+        LocalPlayer:FindFirstChild("Tools"),
+        LocalPlayer.Character,
+        LocalPlayer,
+    }
+    local seen = {}
+    for _, cont in ipairs(containers) do
+        if cont then
+            for _, d in ipairs(cont:GetDescendants()) do
+                if d:IsA("Tool") and not seen[d] then
+                    seen[d] = true
+                    local rn = (toolRealName(d) or ""):lower()
+                    local on = (d.Name or ""):lower()
+                    if rn:find("axe") or rn:find("hatchet")
+                       or on:find("axe") or on:find("hatchet") then
+                        return d
+                    end
+                end
             end
         end
     end
@@ -337,24 +318,85 @@ local function getHP()
     return h and h.Health or 100
 end
 
-local function distanceTo(plank)
-    local c = LocalPlayer.Character
-    if not c then return -1 end
-    local root = c:FindFirstChild("HumanoidRootPart")
-    if not root then return -1 end
-    local ws = getWoodSection(plank)
-    local pos = ws and ws.Position or plank:GetPivot().Position
-    return (root.Position - pos).Magnitude
-end
-
 local function moveAxeToBackpack()
     local c = LocalPlayer.Character
     if not c then return end
     local h = c:FindFirstChildOfClass("Humanoid")
     if h then
         pcall(function() h:UnequipTools() end)
-        task.wait(0.3)
+        task.wait(0.2)
     end
+end
+
+-- ============================================================
+--  SMART TELEPORT (ground-aware)
+-- ============================================================
+--- Teleports the player right beside the plank.
+--- Checks for ground under the target spot; stands on it if close,
+--- otherwise floats at plank-center height.
+--- @return string "ground" or "float" or "fail"
+local function teleportNear(plank)
+    local c = LocalPlayer.Character
+    if not c then return "fail" end
+    local root = c:FindFirstChild("HumanoidRootPart")
+    if not root then return "fail" end
+    local ws = getWoodSection(plank)
+    if not ws then return "fail" end
+
+    -- Side offset (perpendicular to plank axis; planks are usually Y-up, so use X)
+    local sideX, sideZ = CONFIG.TP_SIDE_OFFSET, 0
+
+    -- Try +X, then -X, then +Z, then -Z for an unobstructed side
+    local sides = {
+        Vector3.new(sideX, 0, 0),
+        Vector3.new(-sideX, 0, 0),
+        Vector3.new(0, 0, sideX),
+        Vector3.new(0, 0, -sideX),
+    }
+
+    local chosenSide = sides[1]
+    for _, s in ipairs(sides) do
+        -- Raycast horizontally from plank to check for obstructions at mid-height
+        local origin = ws.Position
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { c, plank, sg }
+        local hit = workspace:Raycast(origin, s, params)
+        if not hit then
+            chosenSide = s
+            break
+        end
+    end
+
+    local targetX = ws.Position.X + chosenSide.X
+    local targetZ = ws.Position.Z + chosenSide.Z
+
+    -- Raycast down from above the plank bottom to find ground
+    local plankBottom = ws.Position.Y - (ws.Size.Y / 2)
+    local castOrigin = Vector3.new(targetX, plankBottom + 2, targetZ)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { c, plank, sg }
+    local hit = workspace:Raycast(castOrigin, Vector3.new(0, -500, 0), params)
+
+    local goalY, mode
+    if hit and (plankBottom - hit.Position.Y) <= CONFIG.TP_MAX_GROUND_GAP then
+        -- Ground is close to plank base — stand on it
+        goalY = hit.Position.Y + CONFIG.TP_GROUND_MARGIN
+        mode = "ground"
+    else
+        -- No ground, or too far below — float at plank center
+        goalY = ws.Position.Y
+        mode = "float"
+    end
+
+    local goalPos = Vector3.new(targetX, goalY, targetZ)
+    local lookAt = Vector3.new(ws.Position.X, goalY, ws.Position.Z)
+
+    root.CFrame = CFrame.new(goalPos, lookAt)
+    root.AssemblyLinearVelocity = Vector3.zero
+    task.wait(CONFIG.TELEPORT_SETTLE)
+    return mode
 end
 
 -- ============================================================
@@ -375,10 +417,20 @@ local function fire(plank, tool, height, faceVector, sectionId, cooldown, hitPoi
     return pcall(function() RemoteProxy:FireServer(cutEvent, payload) end)
 end
 
+--- Full test: teleport, re-find tool, fire, measure.
 local function tryFire(plank, height, faceVector, sectionId)
+    if CONFIG.TELEPORT_ENABLED then
+        local mode = teleportNear(plank)
+        log(("  teleport=%s  dist=%.2f"):format(mode,
+            (LocalPlayer.Character.HumanoidRootPart.Position
+             - (getWoodSection(plank) and getWoodSection(plank).Position
+                or plank:GetPivot().Position)).Magnitude))
+    end
+
     moveAxeToBackpack()
     local tool = findAxe()
     if not tool then return false, "no axe" end
+
     local before = getSize(plank)
     fire(plank, tool, height, faceVector, sectionId)
     task.wait(1.0)
@@ -423,22 +475,31 @@ local function testSweep()
     local p = pickBiggest()
     if not p then log("No planks"); busy = false return end
     log("=== SWEEP heights on " .. getWoodType(p) .. " " .. fmtVec(getSize(p)) .. " ===")
+    if CONFIG.TELEPORT_ENABLED then
+        local mode = teleportNear(p)
+        log("  teleported: " .. mode)
+    end
     local heights = {0.5, 1, 1.5, 2, 3, 4, 5, 8, 12, 20, 30}
     for _, h in ipairs(heights) do
         if getHP() < CONFIG.MIN_HP then log("  HP low, stop"); break end
         if not p.Parent then log("  plank gone"); break end
         local before = getSize(p)
-        moveAxeToBackpack()
         local tool = findAxe()
-        if not tool then log("  no axe"); break end
+        if not tool then
+            log("  no axe, searching...")
+            moveAxeToBackpack()
+            tool = findAxe()
+            if not tool then log("  still none, stop"); break end
+        end
         fire(p, tool, h, Vector3.new(1,0,0), 1)
         task.wait(1.0)
         local after = getSize(p)
         if not p.Parent then log(("  h=%.2f -> DESTROYED"):format(h)); break end
         if before and after then
             local d = (before - after).Magnitude
-            log(("  h=%.2f  before=%s after=%s  %s"):format(h,
-                fmtVec(before), fmtVec(after), d > 0.05 and "<<< WORKED" or ""))
+            log(("  h=%.2f  %s"):format(h, d > 0.05
+                and ("<<< WORKED " .. fmtVec(before) .. "->" .. fmtVec(after))
+                or "no"))
             if d > 0.05 then log("  SUCCESS at h=" .. h); break end
         end
     end
@@ -452,6 +513,7 @@ local function testDirs()
     local p = pickBiggest()
     if not p then log("No planks"); busy = false return end
     log("=== FACE VECTORS on " .. getWoodType(p) .. " ===")
+    if CONFIG.TELEPORT_ENABLED then teleportNear(p) end
     local dirs = {
         {"+X", Vector3.new(1,0,0)},
         {"-X", Vector3.new(-1,0,0)},
@@ -459,14 +521,12 @@ local function testDirs()
         {"-Y", Vector3.new(0,-1,0)},
         {"+Z", Vector3.new(0,0,1)},
         {"-Z", Vector3.new(0,0,-1)},
-        {"UP+Y", Vector3.new(0,1,0)},
     }
     for _, entry in ipairs(dirs) do
         if not p.Parent then break end
         local name, dir = entry[1], entry[2]
         local before = getSize(p)
-        moveAxeToBackpack()
-        local tool = findAxe()
+        local tool = findAxe() or (moveAxeToBackpack() or findAxe())
         if not tool then break end
         fire(p, tool, 1.5217468291521072, dir, 1)
         task.wait(1.0)
@@ -486,11 +546,11 @@ local function testSections()
     local p = pickBiggest()
     if not p then log("No planks"); busy = false return end
     log("=== SECTION IDS on " .. getWoodType(p) .. " ===")
+    if CONFIG.TELEPORT_ENABLED then teleportNear(p) end
     for s = 1, 6 do
         if not p.Parent then break end
         local before = getSize(p)
-        moveAxeToBackpack()
-        local tool = findAxe()
+        local tool = findAxe() or (moveAxeToBackpack() or findAxe())
         if not tool then break end
         fire(p, tool, 1.5217468291521072, Vector3.new(1,0,0), s)
         task.wait(1.0)
@@ -504,43 +564,29 @@ local function testSections()
     busy = false
 end
 
-local function testEquipped()
+local function testJustTP()
     if busy then return end
     busy = true
     local p = pickBiggest()
     if not p then log("No planks"); busy = false return end
-    log("=== EQUIPPED AXE on " .. getWoodType(p) .. " ===")
-    -- equip
-    local tool = findAxe()
-    if not tool then log("no axe"); busy = false return end
+    log("=== TELEPORT TEST on " .. getWoodType(p) .. " ===")
+    local mode = teleportNear(p)
+    log("  mode: " .. mode)
     local c = LocalPlayer.Character
-    local h = c and c:FindFirstChildOfClass("Humanoid")
-    if h then pcall(function() h:EquipTool(tool) end) end
-    task.wait(0.5)
-    tool = findAxe()
-    if not tool then log("axe lost on equip"); busy = false return end
-    local before = getSize(p)
-    fire(p, tool, 1.5217468291521072, Vector3.new(1,0,0), 1)
-    task.wait(1.0)
-    local after = getSize(p)
-    if not p.Parent then log("  DESTROYED"); busy = false return end
-    local d = (before and after) and (before - after).Magnitude or 0
-    log(("  equipped: %s"):format(d > 0.05 and "WORKED" or "no"))
+    if c then
+        local root = c:FindFirstChild("HumanoidRootPart")
+        if root then log("  final pos: " .. fmtVec(root.Position)) end
+    end
     busy = false
 end
 
 local function testAll()
     if busy then return end
     log("################ TRY ALL ################")
-    testExact()
-    task.wait(0.5)
-    testSweep()
-    task.wait(0.5)
-    testDirs()
-    task.wait(0.5)
+    testExact();  task.wait(0.5)
+    testSweep();  task.wait(0.5)
+    testDirs();   task.wait(0.5)
     testSections()
-    task.wait(0.5)
-    testEquipped()
     log("################ TRY ALL DONE ################")
 end
 
@@ -619,6 +665,19 @@ stopBtn.Activated:Connect(function()
     log("Stopped.")
 end)
 
+tpBtn.Activated:Connect(function()
+    CONFIG.TELEPORT_ENABLED = not CONFIG.TELEPORT_ENABLED
+    if CONFIG.TELEPORT_ENABLED then
+        tpBtn.Text = "TP: ON"
+        tpBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 100)
+        log("Teleport ON.")
+    else
+        tpBtn.Text = "TP: OFF"
+        tpBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 60)
+        log("Teleport OFF.")
+    end
+end)
+
 toBpBtn.Activated:Connect(function()
     moveAxeToBackpack()
     refreshAxeLabel()
@@ -629,7 +688,7 @@ v_exact.Activated:Connect(testExact)
 v_sweep.Activated:Connect(testSweep)
 v_dirs.Activated:Connect(testDirs)
 v_sect.Activated:Connect(testSections)
-v_equip.Activated:Connect(testEquipped)
+v_tp.Activated:Connect(testJustTP)
 v_all.Activated:Connect(testAll)
 
 -- ============================================================
@@ -677,30 +736,29 @@ UserInputService.InputBegan:Connect(function(input, gp)
     local hit, hitPos = raycast(pos)
     if not hit then return end
     local model = hit:FindFirstAncestorOfClass("Model")
+    local target
     if model and isPlank(model) then
         log("Tapped: " .. getWoodType(model))
-        if busy then return end
-        busy = true
-        local ok, why = tryFire(model, 1.5217468291521072, Vector3.new(1,0,0), 1)
-        log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
-        busy = false
-        return
+        target = model
+    else
+        local near = findNear(hitPos, CONFIG.TAP_RADIUS)
+        if near then
+            log("Nearby: " .. getWoodType(near))
+            target = near
+        end
     end
-    local near = findNear(hitPos, CONFIG.TAP_RADIUS)
-    if near then
-        log("Nearby: " .. getWoodType(near))
-        if busy then return end
-        busy = true
-        local ok, why = tryFire(near, 1.5217468291521072, Vector3.new(1,0,0), 1)
-        log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
-        busy = false
-    end
+    if not target then return end
+    if busy then return end
+    busy = true
+    local ok, why = tryFire(target, 1.5217468291521072, Vector3.new(1,0,0), 1)
+    log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
+    busy = false
 end)
 
 -- ============================================================
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v14 ready. Water was auto-removed.")
-log("Press TRY ALL to sweep every payload variation.")
-log("Or use individual tests. Report whatever succeeds.")
+log("v15 ready. Water auto-removed. TP: " .. (CONFIG.TELEPORT_ENABLED and "ON" or "OFF"))
+log("TP walks to the plank's side and finds the ground.")
+log("Try 'Just TP' first to see where you land.")
