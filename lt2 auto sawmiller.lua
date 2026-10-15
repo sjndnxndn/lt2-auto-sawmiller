@@ -1,5 +1,6 @@
 -- ============================================================
--- LT2 PLANK MOVER & AUTO-CUTTER v6
+-- LT2 PLANK MOVER & AUTO-CUTTER v7
+-- Includes plank orientation (length→feed, height→up, width→side)
 -- Size limits: W<=3.0, H<=2.6, L<=10.0
 -- ============================================================
 
@@ -28,12 +29,11 @@ local CONFIG = {
     TP_SETTLE     = 0.25,
     TP_GROUND_GAP = 8,
 
-    -- Sawmill size limits (studs). Applies to ALL sawmills for now.
-    -- Cross-section: the two smallest dims of the plank.
-    -- Length: the longest dim of the plank.
     SAWMILL_MAX_WIDTH  = 3.0,
     SAWMILL_MAX_HEIGHT = 2.6,
     SAWMILL_MAX_LENGTH = 10.0,
+
+    DEFAULT_FEED_DIR = Vector3.new(0, 0, 1),
 
     AUTO_INTERVAL = 2.0,
     MAX_QUEUE     = 2,
@@ -45,9 +45,6 @@ local CONFIG = {
     START_H     = 380,
 }
 
--- ============================================================
--- STATE
--- ============================================================
 local state = {
     selectedSawmill = nil,
     selectedPlank   = nil,
@@ -146,10 +143,10 @@ local function mkBtn(text, posX, posY, sizeX, sizeY, color)
     return b
 end
 
-local selSawBtn = mkBtn("1. Select Sawmill", 0.00, 62,  0.49, 30, Color3.fromRGB(60, 120, 200))
-local selPlkBtn = mkBtn("2. Select Plank",   0.51, 62,  0.49, 30, Color3.fromRGB(60, 180, 100))
-local moveBtn   = mkBtn("3. Move to Sawmill", 0.00, 96,  0.49, 30, Color3.fromRGB(200, 150, 50))
-local cutBtn    = mkBtn("Cut Plank to 1x1",   0.51, 96,  0.49, 30, Color3.fromRGB(180, 80, 180))
+local selSawBtn  = mkBtn("1. Select Sawmill",  0.00, 62,  0.49, 30, Color3.fromRGB(60, 120, 200))
+local selPlkBtn  = mkBtn("2. Select Plank",    0.51, 62,  0.49, 30, Color3.fromRGB(60, 180, 100))
+local moveBtn    = mkBtn("3. Move to Sawmill", 0.00, 96,  0.49, 30, Color3.fromRGB(200, 150, 50))
+local cutBtn     = mkBtn("Cut Plank to 1x1",   0.51, 96,  0.49, 30, Color3.fromRGB(180, 80, 180))
 
 local div = Instance.new("Frame")
 div.Size = UDim2.new(1, -10, 0, 1)
@@ -161,14 +158,16 @@ div.Parent = mainFrame
 local autoMoveBtn = mkBtn("Auto Move: OFF", 0.00, 136, 0.49, 28, Color3.fromRGB(90, 90, 90))
 local autoCutBtn  = mkBtn("Auto Cut: OFF",  0.51, 136, 0.49, 28, Color3.fromRGB(90, 90, 90))
 
-local godBtn   = mkBtn("God: ON", 0.00,  168, 0.24, 26, Color3.fromRGB(60, 140, 100))
-local listBtn  = mkBtn("List",    0.25,  168, 0.24, 26, Color3.fromRGB(60, 120, 200))
-local copyBtn  = mkBtn("Copy",    0.50,  168, 0.24, 26, Color3.fromRGB(60, 180, 100))
-local clearBtn = mkBtn("Clear",   0.75,  168, 0.24, 26, Color3.fromRGB(150, 80, 80))
+local orientBtn = mkBtn("Orient",  0.00, 168, 0.24, 26, Color3.fromRGB(140, 100, 200))
+local godBtn    = mkBtn("God: ON", 0.25, 168, 0.24, 26, Color3.fromRGB(60, 140, 100))
+local listBtn   = mkBtn("List",    0.50, 168, 0.24, 26, Color3.fromRGB(60, 120, 200))
+local copyBtn   = mkBtn("Copy",    0.75, 168, 0.24, 26, Color3.fromRGB(60, 180, 100))
+
+local clearBtn = mkBtn("Clear", 0.00, 198, 0.99, 22, Color3.fromRGB(150, 80, 80))
 
 local logBox = Instance.new("ScrollingFrame")
-logBox.Size = UDim2.new(1, -10, 1, -210)
-logBox.Position = UDim2.new(0, 5, 0, 200)
+logBox.Size = UDim2.new(1, -10, 1, -240)
+logBox.Position = UDim2.new(0, 5, 0, 230)
 logBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 5
@@ -497,6 +496,116 @@ local function getWoodType(plank)
 end
 
 -- ============================================================
+-- ORIENTATION
+-- ============================================================
+-- Roblox convention: XVector × YVector = ZVector (Right × Up = -Look)
+-- We want the largest local axis along the feed direction,
+-- the smallest along world up, and the middle along the side.
+-- Given the ranking, this function returns the correct world
+-- directions for the local X, Y, and Z axes with proper
+-- handedness so a valid CFrame is produced.
+local function computeTargetBasis(A_L, A_M, A_S, F, U)
+    -- F = feed (unit), U = up (unit, always world up (0,1,0))
+    -- S = U × F, but avoid normalizing a zero vector
+    local S = U:Cross(F)
+    if S.Magnitude < 0.01 then
+        S = Vector3.new(1, 0, 0)
+    end
+    S = S.Unit
+
+    local V = {}
+    if A_L == "X" and A_M == "Y" and A_S == "Z" then
+        V.X, V.Y, V.Z = F, S, U
+    elseif A_L == "X" and A_M == "Z" and A_S == "Y" then
+        V.X, V.Y, V.Z = F, U, -S
+    elseif A_L == "Y" and A_M == "X" and A_S == "Z" then
+        V.X, V.Y, V.Z = S, F, U
+    elseif A_L == "Y" and A_M == "Z" and A_S == "X" then
+        V.X, V.Y, V.Z = U, F, S
+    elseif A_L == "Z" and A_M == "X" and A_S == "Y" then
+        V.X, V.Y, V.Z = S, U, F
+    elseif A_L == "Z" and A_M == "Y" and A_S == "X" then
+        V.X, V.Y, V.Z = U, -S, F
+    end
+    return V.X, V.Y, V.Z
+end
+
+--- Rotate a plank so its largest dim → feed dir (horizontal),
+--- smallest dim → up, and middle dim → side.
+--- @param plank Model
+--- @param feedDir Vector3|nil  Horizontal direction the length should point
+--- @return boolean success, string reason
+local function orientPlank(plank, feedDir)
+    if not plank or not plank.Parent then return false, "no plank" end
+    local ws = getWoodSection(plank)
+    if not ws then return false, "no WoodSection" end
+
+    feedDir = feedDir or CONFIG.DEFAULT_FEED_DIR
+    local worldUp = Vector3.new(0, 1, 0)
+
+    -- Flatten feed to horizontal
+    local F = feedDir - feedDir:Dot(worldUp) * worldUp
+    if F.Magnitude < 0.01 then
+        F = CONFIG.DEFAULT_FEED_DIR
+    end
+    F = F.Unit
+
+    -- Rank local axes by size
+    local s = ws.Size
+    local ranked = {
+        {axis = "X", size = s.X},
+        {axis = "Y", size = s.Y},
+        {axis = "Z", size = s.Z},
+    }
+    table.sort(ranked, function(a, b) return a.size < b.size end)
+    -- ranked[1] = smallest, [2] = middle, [3] = largest
+
+    -- Skip if already oriented (avoids jitter)
+    local curUp = ws.CFrame.UpVector
+    if math.abs(curUp.Y) > 0.98 then
+        -- already vertical for smallest axis? do a quick check that the
+        -- axis which is currently vertical is the smallest one.
+        local verticalLocal = "Y"
+        if math.abs(ws.CFrame.RightVector.Y) > math.abs(curUp.Y) then
+            verticalLocal = "X"
+        elseif math.abs(ws.CFrame.LookVector.Y) > math.abs(curUp.Y) then
+            verticalLocal = "Z"
+        end
+        if verticalLocal == ranked[1].axis then
+            -- Already correct; still ensure the long axis points along feed
+            local longAxisCur
+            if ranked[3].axis == "X" then longAxisCur = ws.CFrame.RightVector
+            elseif ranked[3].axis == "Y" then longAxisCur = ws.CFrame.UpVector
+            else longAxisCur = ws.CFrame.LookVector end
+            local horiz = Vector3.new(longAxisCur.X, 0, longAxisCur.Z)
+            if horiz.Magnitude > 0.9 and horiz.Unit:Dot(F) > 0.98 then
+                return true, "already oriented"
+            end
+        end
+    end
+
+    local vX, vY, vZ = computeTargetBasis(
+        ranked[3].axis, ranked[2].axis, ranked[1].axis, F, worldUp)
+
+    -- Preserve position, change rotation only
+    local newCF = CFrame.fromMatrix(ws.CFrame.Position, vX, vY, vZ)
+    ws.CFrame = newCF
+    return true, "oriented"
+end
+
+--- Get the feed direction from a sawmill's Conveyor.
+local function getSawmillFeedDir(sawmill)
+    if not sawmill then return CONFIG.DEFAULT_FEED_DIR end
+    local conv = sawmill:FindFirstChild("Conveyor")
+    if conv and conv:IsA("BasePart") then
+        local look = conv.CFrame.LookVector
+        look = Vector3.new(look.X, 0, look.Z)
+        if look.Magnitude > 0.01 then return look.Unit end
+    end
+    return CONFIG.DEFAULT_FEED_DIR
+end
+
+-- ============================================================
 -- TELEPORT
 -- ============================================================
 local function teleportNear(plank)
@@ -658,31 +767,42 @@ local function grabOwnership(plank)
 end
 
 local function movePlankToSawmill(plank, sawmill)
-    if not plank or not sawmill then return false end
+    if not plank or not sawmill then return false, "missing arg" end
+
+    -- 1) Orient the plank at its current location (using sawmill feed dir)
+    local feedDir = getSawmillFeedDir(sawmill)
+    orientPlank(plank, feedDir)
+
+    -- 2) Teleport player near (unchanged position after rotation)
     teleportNear(plank)
+
+    -- 3) Grab ownership
     grabOwnership(plank)
     task.wait(0.1)
+
+    -- 4) Find the target position
     local loadPart = sawmill:FindFirstChild("LoadingHole")
                   or sawmill:FindFirstChild("Loading")
     local target
     if loadPart then target = loadPart.Position
     else target = sawmill:GetPivot().Position + Vector3.new(0, 2, 0) end
-    plank:PivotTo(CFrame.new(target))
+
+    -- 5) Move the plank but PRESERVE its rotation
+    local curPivot = plank:GetPivot()
+    local newPivot = CFrame.new(target) * curPivot.Rotation
+    plank:PivotTo(newPivot)
+
+    -- 6) Re-orient at the sawmill position (belt and braces)
     task.wait(0.05)
+    orientPlank(plank, feedDir)
+
     task.wait(0.1)
-    return true
+    return true, "moved"
 end
 
 -- ============================================================
 -- SAWMILL SIZE
 -- ============================================================
---- Check if a plank fits inside a sawmill's limits.
---- Rules:
----   - Sort dims ascending: [smallest, middle, largest]
----   - Smallest  <= SAWMILL_MAX_HEIGHT (2.6)
----   - Middle    <= SAWMILL_MAX_WIDTH  (3.0)
----   - Largest   <= SAWMILL_MAX_LENGTH (10.0)
---- Returns: (fits, reasonString)
 local function plankFitsSawmill(plank, sawmill)
     if not plank then return false, "no plank" end
     local s = getSize(plank)
@@ -704,7 +824,6 @@ local function plankFitsSawmill(plank, sawmill)
     return true, "fits"
 end
 
---- Human-readable summary of the sawmill limits.
 local function sawmillLimitString()
     return string.format("W<=%.1f H<=%.1f L<=%.1f",
         CONFIG.SAWMILL_MAX_WIDTH,
@@ -903,11 +1022,8 @@ moveBtn.Activated:Connect(function()
 
     state.busy = true
     setStatus("Moving plank...")
-    if movePlankToSawmill(state.selectedPlank, state.selectedSawmill) then
-        log("Plank moved.")
-    else
-        log("Move failed.")
-    end
+    local ok = movePlankToSawmill(state.selectedPlank, state.selectedSawmill)
+    if ok then log("Plank moved and oriented.") else log("Move failed.") end
     setStatus("Ready")
     state.busy = false
 end)
@@ -921,6 +1037,20 @@ cutBtn.Activated:Connect(function()
     cutTo1x1(state.selectedPlank, function(m) log(m) end)
     setStatus("Ready")
     state.busy = false
+end)
+
+orientBtn.Activated:Connect(function()
+    if not state.selectedPlank or not state.selectedPlank.Parent then
+        log("No plank selected."); return
+    end
+    local feedDir = CONFIG.DEFAULT_FEED_DIR
+    if state.selectedSawmill then
+        feedDir = getSawmillFeedDir(state.selectedSawmill)
+    end
+    local ok, reason = orientPlank(state.selectedPlank, feedDir)
+    log("Orient: " .. tostring(reason))
+    local s = getSize(state.selectedPlank)
+    if s then log("New size: " .. fmtVec(s)) end
 end)
 
 autoMoveBtn.Activated:Connect(function()
@@ -1019,5 +1149,5 @@ end)
 -- ============================================================
 log("Ready.")
 log("Limits: " .. sawmillLimitString())
-log("Drag gray corners to resize.")
-log("1) Select sawmill, 2) select plank, 3) move or cut.")
+log("Move & Auto orient planks: length→feed, height→up.")
+log("'Orient' button rotates the selected plank in place.")
