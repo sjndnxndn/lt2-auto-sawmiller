@@ -1,11 +1,12 @@
--- LT2 Cut Diagnostic v3
--- Finds the axe via ToolName StringValue child, and logs a real cut.
+-- LT2 Cut Diagnostic v4
+-- Adds TestPing, tries multiple payloads, highlights big planks to test.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
 local RemoteProxy = ReplicatedStorage:WaitForChild("Interaction"):WaitForChild("RemoteProxy")
+local TestPing = ReplicatedStorage:FindFirstChild("TestPing")
 
 local setClipboard =
     (type(setclipboard) == "function" and setclipboard)
@@ -17,13 +18,13 @@ local setClipboard =
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag3"
+sg.Name = "LT2_CutDiag4"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 500, 0, 400)
-frame.Position = UDim2.new(0.5, -250, 0.5, -200)
+frame.Size = UDim2.new(0, 560, 0, 460)
+frame.Position = UDim2.new(0.5, -280, 0.5, -230)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -31,36 +32,39 @@ frame.Draggable = true
 frame.Parent = sg
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
+title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v3"
+title.Text = "LT2 Cut Diagnostic v4"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
 title.Parent = frame
 
-local function mkBtn(text, x, w, color)
+local function mkBtn(text, x, y, w, h, color)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, w, 0, 32)
-    b.Position = UDim2.new(0, x, 0, 32)
+    b.Size = UDim2.new(0, w, 0, h)
+    b.Position = UDim2.new(0, x, 0, y)
     b.BackgroundColor3 = color
     b.BorderSizePixel = 0
     b.Text = text
     b.TextColor3 = Color3.fromRGB(255, 255, 255)
-    b.TextSize = 13
+    b.TextSize = 12
     b.Font = Enum.Font.SourceSansBold
+    b.TextWrapped = true
     b.Parent = frame
     return b
 end
 
-local listBtn  = mkBtn("List My Planks", 4,   130, Color3.fromRGB(60, 120, 200))
-local copyBtn  = mkBtn("Copy Log",       138, 100, Color3.fromRGB(60, 180, 100))
-local clearBtn = mkBtn("Clear Log",      242, 100, Color3.fromRGB(150, 80, 80))
+local listBtn  = mkBtn("List Planks",      4,   32, 110, 30, Color3.fromRGB(60, 120, 200))
+local pingBtn  = mkBtn("Test Ping",        118, 32, 90,  30, Color3.fromRGB(140, 100, 200))
+local copyBtn  = mkBtn("Copy Log",         212, 32, 90,  30, Color3.fromRGB(60, 180, 100))
+local clearBtn = mkBtn("Clear",            306, 32, 60,  30, Color3.fromRGB(150, 80, 80))
+local equipBtn = mkBtn("Equip Axe",        370, 32, 90,  30, Color3.fromRGB(200, 140, 50))
 
 local axeInfo = Instance.new("TextLabel")
-axeInfo.Size = UDim2.new(1, -350, 0, 32)
-axeInfo.Position = UDim2.new(0, 348, 0, 32)
+axeInfo.Size = UDim2.new(1, -464, 0, 30)
+axeInfo.Position = UDim2.new(0, 462, 0, 32)
 axeInfo.BackgroundTransparency = 1
 axeInfo.Text = "axe: ?"
 axeInfo.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -69,9 +73,26 @@ axeInfo.Font = Enum.Font.Code
 axeInfo.TextXAlignment = Enum.TextXAlignment.Left
 axeInfo.Parent = frame
 
+-- Payload variation row
+local payloadLabel = Instance.new("TextLabel")
+payloadLabel.Size = UDim2.new(1, -8, 0, 20)
+payloadLabel.Position = UDim2.new(0, 4, 0, 66)
+payloadLabel.BackgroundTransparency = 1
+payloadLabel.Text = "Test payload:"
+payloadLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+payloadLabel.TextSize = 11
+payloadLabel.Font = Enum.Font.SourceSansBold
+payloadLabel.TextXAlignment = Enum.TextXAlignment.Left
+payloadLabel.Parent = frame
+
+local h1Btn  = mkBtn("h=1",        4,   88, 80, 28, Color3.fromRGB(70, 90, 130))
+local h2Btn  = mkBtn("h=1.5",      88,  88, 80, 28, Color3.fromRGB(70, 90, 130))
+local h3Btn  = mkBtn("h=2",        172, 88, 80, 28, Color3.fromRGB(70, 90, 130))
+local hHalf  = mkBtn("h=1/2 len",  256, 88, 100, 28, Color3.fromRGB(70, 90, 130))
+
 local logBox = Instance.new("ScrollingFrame")
-logBox.Size = UDim2.new(1, -10, 1, -110)
-logBox.Position = UDim2.new(0, 5, 0, 68)
+logBox.Size = UDim2.new(1, -10, 1, -230)
+logBox.Position = UDim2.new(0, 5, 0, 124)
 logBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 6
@@ -133,47 +154,33 @@ local function fmtVec(v)
     return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
 end
 
---- Return the "real" name of a tool: checks StringValue named "ToolName" first.
 local function toolRealName(tool)
     local tn = tool:FindFirstChild("ToolName")
-    if tn and tn:IsA("StringValue") then
-        return tn.Value
-    end
+    if tn and tn:IsA("StringValue") then return tn.Value end
     return tool.Name
 end
 
---- Search Player.Backpack, Player.Tools, and Character for tool-like objects.
 local function gatherTools()
     local out = {}
-    local containers = {
+    for _, c in ipairs({
         LocalPlayer:FindFirstChild("Backpack"),
         LocalPlayer:FindFirstChild("Tools"),
         LocalPlayer.Character,
-    }
-    for _, c in ipairs(containers) do
+    }) do
         if c then
             for _, d in ipairs(c:GetDescendants()) do
-                if d:IsA("Tool") then
-                    table.insert(out, d)
-                end
+                if d:IsA("Tool") then table.insert(out, d) end
             end
         end
     end
     return out
 end
 
---- Find an axe. Matches against real name (ToolName) AND the object's Name.
 local function findAxe()
     for _, tool in ipairs(gatherTools()) do
-        local realName = (toolRealName(tool) or ""):lower()
-        local objName  = (tool.Name or ""):lower()
-        local function matches(s)
-            return s:find("axe") or s:find("hatchet") or s:find("saw")
-                or s:find("chop") or s:find("gingerbread")
-        end
-        if matches(realName) or matches(objName) then
-            return tool, toolRealName(tool)
-        end
+        local rn = (toolRealName(tool) or ""):lower()
+        local on = (tool.Name or ""):lower()
+        if rn:find("axe") or on:find("axe") then return tool end
     end
     return nil
 end
@@ -200,25 +207,17 @@ local function findAllPlanks()
     return found
 end
 
+local function plankSize(p)
+    local ok, _, size = pcall(function() return p:GetBoundingBox() end)
+    if ok then return size end
+end
+
 local function snapshot(model, tag)
-    local ok, _, size = pcall(function() return model:GetBoundingBox() end)
-    log(("[%s] name=%s"):format(tag, model.Name))
-    if ok then log(("[%s] size=%s"):format(tag, fmtVec(size))) end
-    log(("[%s] pivot=%s"):format(tag, fmtVec(model:GetPivot().Position)))
-    local kids = {}
-    for _, c in ipairs(model:GetChildren()) do
-        if c.ClassName == "ObjectValue" or c.ClassName == "NumberValue"
-            or c.ClassName == "StringValue" or c.Name == "CutEvent"
-            or c.Name == "Owner" or c.Name == "WoodSection" then
-            table.insert(kids, c.ClassName .. ":" .. c.Name)
-        end
-    end
-    log(("[%s] key children: %s"):format(tag, table.concat(kids, ", ")))
-    -- Also log WoodSection size (this is the actual wood part)
+    log(("[%s] %s  pivot=%s"):format(tag, model.Name, fmtVec(model:GetPivot().Position)))
     local ws = model:FindFirstChild("WoodSection")
     if ws and ws:IsA("BasePart") then
-        log(("[%s] WoodSection.Size=%s"):format(tag, fmtVec(ws.Size)))
-        log(("[%s] WoodSection.CFrame.Pos=%s"):format(tag, fmtVec(ws.Position)))
+        log(("[%s] WoodSection.Size=%s  Pos=%s"):format(
+            tag, fmtVec(ws.Size), fmtVec(ws.Position)))
     end
 end
 
@@ -227,59 +226,14 @@ end
 -- ============================================================
 local busy = false
 
-local function runCutTest(plank)
-    if busy then return end
-    busy = true
-
-    log("========== NEW TEST ==========")
-    log("Time: " .. os.date("%Y-%m-%d %H:%M:%S"))
-    snapshot(plank, "BEFORE")
-
-    local axe, realName = findAxe()
-    if not axe then
-        log("!! Still no axe found. Tools currently visible:")
-        local all = gatherTools()
-        if #all == 0 then
-            log("   (none — equip an axe so it appears in Backpack)")
-        else
-            for _, t in ipairs(all) do
-                log(("   tool: obj=%s real=%s"):format(t.Name, tostring(toolRealName(t))))
-            end
-        end
-        busy = false
-        return
-    end
-    log("Using axe: " .. tostring(realName) .. "  (obj=" .. axe.Name .. ")")
-
+local function fireCut(plank, axe, height)
     local cutEvent = plank:FindFirstChild("CutEvent")
     if not cutEvent then
-        log("!! No CutEvent child.")
-        busy = false
-        return
+        log("!! No CutEvent child."); return false
     end
-    log("CutEvent class: " .. cutEvent.ClassName)
-
-    -- watch workspace
-    local beforeChildren = {}
-    for _, c in ipairs(workspace:GetChildren()) do
-        beforeChildren[c] = true
-    end
-    local watching = true
-    task.spawn(function()
-        local t0 = tick()
-        while watching and tick() - t0 < 3 do
-            for _, c in ipairs(workspace:GetChildren()) do
-                if not beforeChildren[c] then
-                    beforeChildren[c] = true
-                    log("[NEW in workspace] " .. c.ClassName .. " : " .. c.Name)
-                end
-            end
-            task.wait(0.1)
-        end
-    end)
 
     local payload = {
-        height = 1,
+        height = height,
         faceVector = Vector3.new(1, 0, 0),
         cooldown = 0.23737628459930421,
         sectionId = 1,
@@ -287,67 +241,124 @@ local function runCutTest(plank)
         tool = axe,
         cuttingClass = "Axe",
     }
-    log("Firing with height=1 ...")
-
+    log(("Firing: height=%s faceVector=(1,0,0) sectionId=1 hitPoints=1.2"):format(tostring(height)))
     local ok, err = pcall(function()
         RemoteProxy:FireServer(cutEvent, payload)
     end)
     if not ok then
         log("!! FireServer error: " .. tostring(err))
-        watching = false
-        busy = false
-        return
+        return false
     end
-    log("Fired. Waiting 2s...")
+    return true
+end
+
+local function runCutTest(plank, heightOverride)
+    if busy then return end
+    busy = true
+
+    log("========== NEW TEST ==========")
+    log("Time: " .. os.date("%H:%M:%S"))
+    snapshot(plank, "BEFORE")
+
+    local axe = findAxe()
+    if not axe then
+        log("!! No axe. Aborting."); busy = false; return
+    end
+    log("Axe: " .. toolRealName(axe))
+
+    -- Watch workspace for new objects
+    local before = {}
+    for _, c in ipairs(workspace:GetChildren()) do before[c] = true end
+    local watching = true
+    task.spawn(function()
+        local t0 = tick()
+        while watching and tick() - t0 < 2.5 do
+            for _, c in ipairs(workspace:GetChildren()) do
+                if not before[c] then
+                    before[c] = true
+                    log("[NEW] " .. c.ClassName .. " : " .. c.Name)
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+
+    -- Determine height: use override, or 1/2 the longest dim if too long
+    local size = plankSize(plank)
+    local useHeight = heightOverride
+    if not useHeight then
+        useHeight = 1
+        if size then
+            local maxDim = math.max(size.X, size.Y, size.Z)
+            if maxDim < 2 then
+                log(("!! Plank longest axis = %.2f studs. Too small to cut. Try a bigger one."):format(maxDim))
+                watching = false; busy = false; return
+            end
+            -- Use half the longest axis if it's very long
+            if maxDim > 4 then
+                useHeight = maxDim / 2
+                log(("Plank is long (%.2f) — using half (%.2f) as height."):format(maxDim, useHeight))
+            end
+        end
+    end
+
+    if not fireCut(plank, axe, useHeight) then
+        watching = false; busy = false; return
+    end
+
     task.wait(2)
 
     if plank.Parent then
         snapshot(plank, "AFTER ")
-        log("Original plank parent: " .. plank.Parent:GetFullName())
     else
-        log("Original plank was DESTROYED.")
+        log("Plank DESTROYED.")
     end
 
     watching = false
-    log("========== TEST DONE =========")
+    log("========== DONE =========")
     busy = false
 end
 
 -- ============================================================
---  BUTTONS (use .Activated — fires once for mouse OR touch)
+--  BUTTONS
 -- ============================================================
 local function runListPlanks()
     for _, c in ipairs(picker:GetChildren()) do
         if c:IsA("TextButton") then c:Destroy() end
     end
 
-    -- Refresh axe info too
-    local axe, realName = findAxe()
-    if axe then axeInfo.Text = "axe: " .. tostring(realName)
-    else axeInfo.Text = "axe: NONE" end
+    local axe = findAxe()
+    axeInfo.Text = axe and ("axe: " .. toolRealName(axe)) or "axe: NONE"
 
     local planks = findAllPlanks()
-    log(("Found %d plank(s) you own."):format(#planks))
-    if #planks == 0 then picker.Visible = false return end
+    log(("Found %d plank(s)."):format(#planks))
+    if #planks == 0 then picker.Visible = false; return end
 
-    -- Sort smallest first (so the small ones are easier to test)
-    table.sort(planks, function(a, b)
-        local _, sa = a:GetBoundingBox()
-        local _, sb = b:GetBoundingBox()
-        return sa.Magnitude < sb.Magnitude
-    end)
+    -- Sort so the middle-sized planks (2-8 studs) come first — those are ideal test targets
+    local function score(p)
+        local s = plankSize(p)
+        if not s then return 9999 end
+        local m = math.max(s.X, s.Y, s.Z)
+        -- Distance from ideal = 4 studs
+        return math.abs(m - 4)
+    end
+    table.sort(planks, function(a, b) return score(a) < score(b) end)
 
     for i, p in ipairs(planks) do
-        local ok, _, size = pcall(function() return p:GetBoundingBox() end)
+        local s = plankSize(p)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -6, 0, 30)
-        btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
         btn.BorderSizePixel = 0
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         btn.TextSize = 12
         btn.Font = Enum.Font.Code
         btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.Text = ("  #%d  size=%s"):format(i, ok and fmtVec(size) or "?")
+        local maxDim = s and math.max(s.X, s.Y, s.Z) or 0
+        local ideal = (maxDim >= 2 and maxDim <= 10)
+        btn.BackgroundColor3 = ideal and Color3.fromRGB(60, 140, 80)
+                                       or Color3.fromRGB(70, 70, 70)
+        local tag = ideal and " *BEST*" or ""
+        btn.Text = ("  #%d  size=%s%s"):format(i, s and fmtVec(s) or "?", tag)
         btn.Parent = picker
         btn.Activated:Connect(function()
             picker.Visible = false
@@ -359,6 +370,21 @@ local function runListPlanks()
 end
 
 listBtn.Activated:Connect(runListPlanks)
+
+pingBtn.Activated:Connect(function()
+    if not TestPing then
+        log("!! TestPing not found in ReplicatedStorage.")
+        return
+    end
+    local ok, result = pcall(function()
+        return TestPing:InvokeServer()
+    end)
+    if ok then
+        log("TestPing result: " .. tostring(result))
+    else
+        log("TestPing error: " .. tostring(result))
+    end
+end)
 
 copyBtn.Activated:Connect(function()
     if not setClipboard then log("!! no clipboard") return end
@@ -373,21 +399,61 @@ clearBtn.Activated:Connect(function()
     end
 end)
 
+equipBtn.Activated:Connect(function()
+    local axe = findAxe()
+    if not axe then log("!! No axe found.") return end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:EquipTool(axe)
+        log("Equipped: " .. toolRealName(axe))
+    end
+end)
+
+-- Height variation buttons — after picking a plank, click one to test
+local function pickAndCut(height)
+    local planks = findAllPlanks()
+    if #planks == 0 then log("No planks.") return end
+    -- Pick the biggest one for testing
+    table.sort(planks, function(a, b)
+        local sa, sb = plankSize(a), plankSize(b)
+        return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
+    end)
+    runCutTest(planks[1], height)
+end
+
+h1Btn.Activated:Connect(function() pickAndCut(1) end)
+h2Btn.Activated:Connect(function() pickAndCut(1.5) end)
+h3Btn.Activated:Connect(function() pickAndCut(2) end)
+hHalf.Activated:Connect(function()
+    local planks = findAllPlanks()
+    if #planks == 0 then return end
+    table.sort(planks, function(a, b)
+        local sa, sb = plankSize(a), plankSize(b)
+        return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
+    end)
+    local s = plankSize(planks[1])
+    local h = s and math.max(s.X, s.Y, s.Z) / 2 or 1
+    runCutTest(planks[1], h)
+end)
+
 -- ============================================================
 --  STARTUP
 -- ============================================================
 do
-    local axe, realName = findAxe()
+    local axe = findAxe()
     if axe then
-        axeInfo.Text = "axe: " .. tostring(realName)
-        log("Axe found: " .. tostring(realName) .. " (obj=" .. axe.Name .. ")")
+        axeInfo.Text = "axe: " .. toolRealName(axe)
+        log("Axe: " .. toolRealName(axe))
     else
-        local all = gatherTools()
-        axeInfo.Text = "axe: NONE (" .. #all .. " tools)"
-        log(("No axe detected. %d tool(s) visible in Backpack/Character."):format(#all))
-        for _, t in ipairs(all) do
-            log(("  - obj=%s  ToolName=%s"):format(t.Name, tostring(toolRealName(t))))
-        end
+        axeInfo.Text = "axe: NONE"
+        log("No axe detected.")
     end
-    log("Tap 'List My Planks' to start.")
+    log("--- HOW TO TEST ---")
+    log("1. Tap 'Test Ping' - confirms server responds.")
+    log("2. Tap 'List Planks' - green entries are good test targets (*BEST*).")
+    log("3. Pick a GREEN plank to test cut with default payload (h=1).")
+    log("4. Or use h=1.5 / h=2 / h=1/2 len buttons to try variations")
+    log("   (these pick the LARGEST plank automatically).")
+    log("5. Copy Log after each test.")
 end
