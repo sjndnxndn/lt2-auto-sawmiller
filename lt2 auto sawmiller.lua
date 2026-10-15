@@ -1,6 +1,6 @@
--- LT2 Cut Diagnostic v12
--- Tries tool:Activate() instead of hand-firing the remote.
--- No teleport at all.
+-- LT2 Cut Diagnostic v13
+-- Uses Backpack tool (UNEQUIPPED) as the tool payload, like the game's own example.
+-- No teleport. No equip.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -43,8 +43,7 @@ local function stopGod()
     if godConn then godConn:Disconnect(); godConn = nil end
 end
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    if CONFIG.GODMODE then stopGod(); applyGod() end
+    task.wait(0.5); if CONFIG.GODMODE then stopGod(); applyGod() end
 end)
 if CONFIG.GODMODE then applyGod() end
 
@@ -52,13 +51,13 @@ if CONFIG.GODMODE then applyGod() end
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag12"
+sg.Name = "LT2_CutDiag13"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 560, 0, 460)
-frame.Position = UDim2.new(0.5, -280, 0.5, -230)
+frame.Size = UDim2.new(0, 580, 0, 470)
+frame.Position = UDim2.new(0.5, -290, 0.5, -235)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -69,7 +68,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v12 - activate test"
+title.Text = "LT2 Cut Diagnostic v13 - backpack tool"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -90,17 +89,18 @@ local function mkBtn(text, x, y, w, h, color)
     return b
 end
 
-local listBtn  = mkBtn("List",       4,   32, 55, 30, Color3.fromRGB(60, 120, 200))
-local copyBtn  = mkBtn("Copy",       62,  32, 55, 30, Color3.fromRGB(60, 180, 100))
-local clearBtn = mkBtn("Clear",      120, 32, 55, 30, Color3.fromRGB(150, 80, 80))
-local equipBtn = mkBtn("Equip",      178, 32, 55, 30, Color3.fromRGB(200, 140, 50))
-local stopBtn  = mkBtn("STOP",       236, 32, 55, 30, Color3.fromRGB(200, 50, 50))
-local godBtn   = mkBtn("God: ON",    294, 32, 80, 30, Color3.fromRGB(60, 140, 100))
-local toolBtn  = mkBtn("Dump Tool",  378, 32, 90, 30, Color3.fromRGB(120, 120, 200))
+local listBtn  = mkBtn("List",      4,   32, 55, 30, Color3.fromRGB(60, 120, 200))
+local copyBtn  = mkBtn("Copy",      62,  32, 55, 30, Color3.fromRGB(60, 180, 100))
+local clearBtn = mkBtn("Clear",     120, 32, 55, 30, Color3.fromRGB(150, 80, 80))
+local bpBtn    = mkBtn("To BP",     178, 32, 55, 30, Color3.fromRGB(200, 140, 50))
+local stopBtn  = mkBtn("STOP",      236, 32, 55, 30, Color3.fromRGB(200, 50, 50))
+local godBtn   = mkBtn("God: ON",   294, 32, 80, 30, Color3.fromRGB(60, 140, 100))
+local dumpBtn  = mkBtn("Dump Tool", 378, 32, 90, 30, Color3.fromRGB(120, 120, 200))
+local valBtn   = mkBtn("Dump Vals", 472, 32, 90, 30, Color3.fromRGB(120, 120, 200))
 
 local axeInfo = Instance.new("TextLabel")
-axeInfo.Size = UDim2.new(1, -470, 0, 30)
-axeInfo.Position = UDim2.new(0, 470, 0, 32)
+axeInfo.Size = UDim2.new(1, -100, 0, 30)
+axeInfo.Position = UDim2.new(0, 4, 0, 66)
 axeInfo.BackgroundTransparency = 1
 axeInfo.Text = "axe: ?"
 axeInfo.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -109,25 +109,14 @@ axeInfo.Font = Enum.Font.Code
 axeInfo.TextXAlignment = Enum.TextXAlignment.Left
 axeInfo.Parent = frame
 
-local lbl2 = Instance.new("TextLabel")
-lbl2.Size = UDim2.new(1, -8, 0, 18)
-lbl2.Position = UDim2.new(0, 4, 0, 66)
-lbl2.BackgroundTransparency = 1
-lbl2.Text = "Pick a plank (list or tap). Script will NOT teleport you."
-lbl2.TextColor3 = Color3.fromRGB(200, 200, 200)
-lbl2.TextSize = 11
-lbl2.Font = Enum.Font.SourceSansBold
-lbl2.TextXAlignment = Enum.TextXAlignment.Left
-lbl2.Parent = frame
-
-local v_act   = mkBtn("Test: Activate",    4,   86, 140, 28, Color3.fromRGB(60, 140, 80))
-local v_remote= mkBtn("Test: Remote",      148, 86, 140, 28, Color3.fromRGB(70, 90, 130))
-local v_both  = mkBtn("Test: Both",        292, 86, 140, 28, Color3.fromRGB(140, 90, 130))
-local v_bp    = mkBtn("Test: BP Remote",   436, 86, 120, 28, Color3.fromRGB(140, 100, 60))
+local v_bp    = mkBtn("Test: BP Tool",      4,   92, 140, 28, Color3.fromRGB(60, 140, 80))
+local v_bp2   = mkBtn("Test: BP Tool x5",   148, 92, 140, 28, Color3.fromRGB(70, 90, 130))
+local v_both  = mkBtn("Test: BP + Equip",   292, 92, 140, 28, Color3.fromRGB(140, 90, 130))
+local v_range = mkBtn("Test: h=Range",      436, 92, 120, 28, Color3.fromRGB(140, 100, 60))
 
 local logBox = Instance.new("ScrollingFrame")
-logBox.Size = UDim2.new(1, -10, 1, -250)
-logBox.Position = UDim2.new(0, 5, 0, 124)
+logBox.Size = UDim2.new(1, -10, 1, -260)
+logBox.Position = UDim2.new(0, 5, 0, 130)
 logBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 6
@@ -141,8 +130,8 @@ layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = logBox
 
 local picker = Instance.new("ScrollingFrame")
-picker.Size = UDim2.new(1, -10, 0, 130)
-picker.Position = UDim2.new(0, 5, 1, -138)
+picker.Size = UDim2.new(1, -10, 0, 140)
+picker.Position = UDim2.new(0, 5, 1, -148)
 picker.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 picker.BorderSizePixel = 0
 picker.ScrollBarThickness = 6
@@ -198,26 +187,17 @@ local function toolRealName(tool)
     return tool.Name
 end
 
-local function findAxe()
-    local seen = {}
-    local order = {
-        LocalPlayer:FindFirstChild("Backpack"),
-        LocalPlayer:FindFirstChild("Tools"),
-        LocalPlayer.Character,
-        LocalPlayer,
-    }
-    for _, container in ipairs(order) do
-        if container then
-            for _, d in ipairs(container:GetDescendants()) do
-                if d:IsA("Tool") and not seen[d] then
-                    seen[d] = true
-                    local rn = (toolRealName(d) or ""):lower()
-                    local on = (d.Name or ""):lower()
-                    if rn:find("axe") or rn:find("hatchet")
-                       or on:find("axe") or on:find("hatchet") then
-                        return d
-                    end
-                end
+--- Look for the tool ONLY in the Backpack (unequipped), like the game's example.
+local function findBackpackTool()
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if not bp then return nil end
+    for _, d in ipairs(bp:GetChildren()) do
+        if d:IsA("Tool") then
+            local rn = (toolRealName(d) or ""):lower()
+            local on = (d.Name or ""):lower()
+            if rn:find("axe") or rn:find("hatchet")
+               or on:find("axe") or on:find("hatchet") then
+                return d
             end
         end
     end
@@ -259,7 +239,6 @@ end
 local function getWoodSection(plank)
     local ws = plank:FindFirstChild("WoodSection")
     if ws and ws:IsA("BasePart") then return ws end
-    return nil
 end
 
 local function getSize(plank)
@@ -286,53 +265,27 @@ local function distanceToPlank(plank)
     return (root.Position - pos).Magnitude
 end
 
-local function ensureEquipped(axe)
-    if not axe or not axe.Parent then return false end
+--- Move the axe to Backpack (unequip it) if it's currently held.
+local function moveAxeToBackpack()
     local c = LocalPlayer.Character
-    if not c then return false end
-    if axe:IsDescendantOf(c) then return true end
+    if not c then return end
     local h = c:FindFirstChildOfClass("Humanoid")
-    if not h then return false end
-    pcall(function() h:EquipTool(axe) end)
-    task.wait(0.3)
-    return axe:IsDescendantOf(c)
+    if h then
+        pcall(function() h:UnequipTools() end)
+        task.wait(0.3)
+    end
 end
 
 -- ============================================================
---  METHODS
+--  FIRE
 -- ============================================================
-local function methodActivate(axe, plank)
-    -- Just call Tool:Activate(). The tool's own AxeClient script should fire the cut.
-    if not axe then return false end
-    if not axe:IsDescendantOf(LocalPlayer.Character) then
-        return false, "not equipped"
-    end
-    local ok, err = pcall(function() axe:Activate() end)
-    if not ok then return false, tostring(err) end
-    return true
-end
-
-local function methodRemote(axe, plank, toolSource)
-    -- Original hand-fired remote.
-    local tool = axe
-    if toolSource == "backpack" then
-        local bp = LocalPlayer:FindFirstChild("Backpack")
-        if bp then
-            -- Temporarily unequip
-            local c = LocalPlayer.Character
-            local h = c and c:FindFirstChildOfClass("Humanoid")
-            if h and axe:IsDescendantOf(c) then
-                pcall(function() h:UnequipTools() end)
-                task.wait(0.1)
-            end
-            local bpTool = bp:FindFirstChild(axe.Name)
-            if bpTool then tool = bpTool end
-        end
-    end
+local function fireOnce(plank, tool, height)
     local cutEvent = plank:FindFirstChild("CutEvent")
     if not cutEvent then return false, "no CutEvent" end
+    if not tool then return false, "no tool" end
+
     local payload = {
-        height = 1,
+        height = height or 1,
         faceVector = Vector3.new(1, 0, 0),
         cooldown = 0.23737628459930421,
         sectionId = 1,
@@ -343,71 +296,66 @@ local function methodRemote(axe, plank, toolSource)
     local ok, err = pcall(function()
         RemoteProxy:FireServer(cutEvent, payload)
     end)
-    if not ok then return false, tostring(err) end
-    return true
+    return ok, err
 end
 
 -- ============================================================
---  TEST RUNNER
+--  TEST
 -- ============================================================
 local busy = false
 
-local function testOne(plank, method)
+local function testOne(plank, mode)
     if busy then return end
     busy = true
 
-    log("========== TEST (" .. method .. ") ==========")
-    log("Plank: " .. plank.Name .. "  wood=" .. getWoodType(plank))
+    log("========== TEST (" .. mode .. ") ==========")
+    log("Plank: " .. plank.Name .. " wood=" .. getWoodType(plank))
     local before = getSize(plank)
     log("BEFORE size=" .. (before and fmtVec(before) or "?"))
+    log(("Distance: %.2f  HP: %.0f"):format(distanceToPlank(plank), getHP()))
 
-    local axe = findAxe()
-    if not axe then
-        log("!! No axe."); busy = false; return
+    -- Make sure axe is in Backpack
+    moveAxeToBackpack()
+
+    local tool = findBackpackTool()
+    if not tool then
+        log("!! No axe in Backpack.")
+        busy = false
+        return
     end
-    log("Axe: " .. toolRealName(axe))
+    log("Backpack tool: " .. toolRealName(tool) .. "  (obj=" .. tool.Name .. ")")
 
-    -- Equip the axe (needed for Activate; harmless for remote)
-    ensureEquipped(axe)
-    task.wait(0.3)
-
-    -- Re-resolve the axe ref (equip can move it)
-    axe = findAxe()
-    if not axe then
-        log("!! Axe vanished after equip."); busy = false; return
+    -- Determine height
+    local h = 1
+    if mode == "h_range" then
+        local rv = tool:FindFirstChild("Range")
+        if rv and rv:IsA("NumberValue") then
+            h = rv.Value
+            log(("Range value = %.2f"):format(h))
+        end
     end
 
-    log(("Distance to plank: %.2f"):format(distanceToPlank(plank)))
-    log(("HP: %.0f"):format(getHP()))
-
-    local cuts = CONFIG.CUTS_PER_BURST
+    local cuts = (mode == "x5") and 5 or CONFIG.CUTS_PER_BURST
     local delay = CONFIG.BURST_DELAY
 
     for i = 1, cuts do
         if not plank.Parent then
-            log("  plank gone at cut " .. i); break
+            log("  plank gone at " .. i); break
         end
         if getHP() < CONFIG.MIN_HP then
             log(("  HP %.0f < %d, abort"):format(getHP(), CONFIG.MIN_HP))
             break
         end
 
-        local ok, err
-        if method == "activate" then
-            ok, err = methodActivate(axe, plank)
-        elseif method == "remote" then
-            ok, err = methodRemote(axe, plank, "equipped")
-        elseif method == "both" then
-            local ok1 = methodActivate(axe, plank)
-            task.wait(0.1)
-            local ok2 = methodRemote(axe, plank, "equipped")
-            ok = ok1 or ok2
-        elseif method == "bp_remote" then
-            ok, err = methodRemote(axe, plank, "backpack")
+        -- Re-read tool every cut (Backpack tool might have changed name/place)
+        tool = findBackpackTool()
+        if not tool then
+            log("  no backpack tool at cut " .. i); break
         end
 
+        local ok, err = fireOnce(plank, tool, h)
         if ok then
-            log(("  cut %d/%d  hp=%.0f"):format(i, cuts, getHP()))
+            log(("  cut %d/%d fired (h=%s) hp=%.0f"):format(i, cuts, tostring(h), getHP()))
         else
             log(("  cut %d/%d FAIL: %s"):format(i, cuts, tostring(err)))
         end
@@ -418,7 +366,7 @@ local function testOne(plank, method)
     task.wait(1.0)
     if plank.Parent then
         local after = getSize(plank)
-        log("AFTER  size=" .. (after and fmtVec(after) or "?"))
+        log("AFTER size=" .. (after and fmtVec(after) or "?"))
         if before and after then
             local d = (before - after).Magnitude
             if d > 0.05 then
@@ -438,8 +386,22 @@ end
 --  BUTTONS
 -- ============================================================
 local function refreshAxeLabel()
-    local a = findAxe()
-    axeInfo.Text = a and ("axe: " .. toolRealName(a)) or "axe: NONE"
+    local bp = findBackpackTool()
+    if bp then
+        axeInfo.Text = "backpack axe: " .. toolRealName(bp)
+        return
+    end
+    -- Check character
+    local c = LocalPlayer.Character
+    if c then
+        for _, d in ipairs(c:GetChildren()) do
+            if d:IsA("Tool") then
+                axeInfo.Text = "axe is HELD: " .. toolRealName(d) .. " (unequip it)"
+                return
+            end
+        end
+    end
+    axeInfo.Text = "axe: NONE"
 end
 
 local function runListPlanks()
@@ -469,8 +431,7 @@ local function runListPlanks()
         b.Parent = picker
         b.Activated:Connect(function()
             picker.Visible = false
-            -- default: activate method
-            testOne(p, "activate")
+            testOne(p, "bp")
         end)
     end
     picker.Visible = true
@@ -491,11 +452,10 @@ clearBtn.Activated:Connect(function()
     end
 end)
 
-equipBtn.Activated:Connect(function()
-    local a = findAxe()
-    if not a then log("!! No axe.") return end
-    if ensureEquipped(a) then log("Equipped: " .. toolRealName(a)) end
+bpBtn.Activated:Connect(function()
+    moveAxeToBackpack()
     refreshAxeLabel()
+    log("Moved tools to Backpack.")
 end)
 
 stopBtn.Activated:Connect(function()
@@ -516,31 +476,66 @@ godBtn.Activated:Connect(function()
     end
 end)
 
-toolBtn.Activated:Connect(function()
-    local a = findAxe()
-    if not a then log("!! No axe.") return end
-    log("=== TOOL DUMP: " .. a.Name .. " ===")
-    for _, c in ipairs(a:GetDescendants()) do
-        log(("  %s  [%s]"):format(c.Name, c.ClassName))
+dumpBtn.Activated:Connect(function()
+    local bp = findBackpackTool()
+    local t = bp
+    if not t then
+        -- try held
+        local c = LocalPlayer.Character
+        if c then
+            for _, d in ipairs(c:GetChildren()) do
+                if d:IsA("Tool") then t = d; break end
+            end
+        end
     end
-    log("=== END DUMP ===")
+    if not t then log("!! No tool to dump.") return end
+    log("=== TOOL DUMP: " .. t.Name .. " ===")
+    for _, c in ipairs(t:GetDescendants()) do
+        log(("  %s [%s]"):format(c.Name, c.ClassName))
+    end
+    log("=== END ===")
 end)
 
--- Quick test buttons — pick biggest plank
-local function pickBiggest(method)
+valBtn.Activated:Connect(function()
+    local bp = findBackpackTool()
+    local t = bp
+    if not t then
+        local c = LocalPlayer.Character
+        if c then
+            for _, d in ipairs(c:GetChildren()) do
+                if d:IsA("Tool") then t = d; break end
+            end
+        end
+    end
+    if not t then log("!! No tool.") return end
+    log("=== VALUE DUMP: " .. t.Name .. " ===")
+    for _, c in ipairs(t:GetDescendants()) do
+        if c:IsA("StringValue") or c:IsA("NumberValue")
+           or c:IsA("IntValue") or c:IsA("BoolValue")
+           or c:IsA("ObjectValue") then
+            local ok, v = pcall(function() return c.Value end)
+            log(("  %s [%s] = %s"):format(c.Name, c.ClassName,
+                ok and tostring(v) or "?"))
+        end
+    end
+    log("=== END ===")
+end)
+
+-- Quick test buttons
+local function pickBiggest(mode)
     local planks = findAllPlanks()
     if #planks == 0 then return end
     table.sort(planks, function(a, b)
         return (getSize(a) and getSize(a).Magnitude or 0) >
                (getSize(b) and getSize(b).Magnitude or 0)
     end)
-    testOne(planks[1], method)
+    testOne(planks[1], mode)
 end
 
-v_act.Activated:Connect(function() pickBiggest("activate") end)
-v_remote.Activated:Connect(function() pickBiggest("remote") end)
-v_both.Activated:Connect(function() pickBiggest("both") end)
-v_bp.Activated:Connect(function() pickBiggest("bp_remote") end)
+v_bp.Activated:Connect(function() pickBiggest("bp") end)
+v_bp2.Activated:Connect(function() pickBiggest("x5") end)
+v_both.Activated:Connect(function() pickBiggest("bp") end)
+v_range.Activated:Connect(function() pickBiggest("h_range") end)
 
 -- ============================================================
 --  TAP-TO-PICK
@@ -592,13 +587,13 @@ UserInputService.InputBegan:Connect(function(input, gp)
     local model = hit:FindFirstAncestorOfClass("Model")
     if model and isPlank(model) then
         log("Tapped: " .. model.Name .. " [" .. getWoodType(model) .. "]")
-        testOne(model, "activate")
+        testOne(model, "bp")
         return
     end
     local nearby = findPlankNear(hitPos, CONFIG.TAP_RADIUS)
     if nearby then
         log("Nearby: " .. getWoodType(nearby))
-        testOne(nearby, "activate")
+        testOne(nearby, "bp")
     else
         log("No plank nearby.")
     end
@@ -608,8 +603,7 @@ end)
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v12 ready. NO teleport. Godmode ON.")
-log("Tests fire from wherever you are standing.")
-log("'Test: Activate' calls axe:Activate() - the game's own cut path.")
-log("'Dump Tool' lists everything inside the tool so we can see AxeClient.")
-log("Tap a plank, or press a Test button.")
+log("v13 ready. NO teleport, NO equip.")
+log("Uses the axe from your Backpack - like the game's own example.")
+log("If your axe says 'HELD', press 'To BP' to unequip it.")
+log("Then tap a plank or press 'Test: BP Tool'.")
