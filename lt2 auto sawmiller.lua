@@ -1,5 +1,6 @@
--- LT2 Cut Diagnostic v11
--- Ground-based teleport + godmode. No more fall damage.
+-- LT2 Cut Diagnostic v12
+-- Tries tool:Activate() instead of hand-firing the remote.
+-- No teleport at all.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,18 +12,11 @@ local Interaction = ReplicatedStorage:WaitForChild("Interaction")
 local RemoteProxy = Interaction:WaitForChild("RemoteProxy")
 
 local CONFIG = {
-    CUTS_PER_BURST   = 10,
-    BURST_DELAY      = 1.0,
-    FACE_VECTOR      = Vector3.new(1, 0, 0),
-    COOLDOWN         = 0.23737628459930421,
-    SECTION_ID       = 1,
-    HIT_POINTS       = 1.2,
-    CUTTING_CLASS    = "Axe",
-    TAP_SEARCH_RADIUS = 8,
-    TELEPORT_SETTLE  = 0.4,
-    EQUIP_SETTLE     = 0.3,
-    GROUND_OFFSET    = 4,   -- how far to stand from the plank (studs, on the ground)
-    GODMODE          = true,
+    CUTS_PER_BURST = 10,
+    BURST_DELAY    = 1.0,
+    MIN_HP         = 40,
+    TAP_RADIUS     = 8,
+    GODMODE        = true,
 }
 
 local setClipboard = nil
@@ -34,51 +28,37 @@ end
 -- ============================================================
 --  GODMODE
 -- ============================================================
-local godmodeConn = nil
-
-local function applyGodmode()
-    if godmodeConn then return end
-    godmodeConn = RunService.Heartbeat:Connect(function()
+local godConn
+local function applyGod()
+    if godConn then return end
+    godConn = RunService.Heartbeat:Connect(function()
         if not CONFIG.GODMODE then return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then return end
-        if hum.Health < hum.MaxHealth then
-            hum.Health = hum.MaxHealth
-        end
+        local c = LocalPlayer.Character
+        if not c then return end
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if h and h.Health < h.MaxHealth then h.Health = h.MaxHealth end
     end)
 end
-
-local function clearGodmode()
-    if godmodeConn then
-        godmodeConn:Disconnect()
-        godmodeConn = nil
-    end
+local function stopGod()
+    if godConn then godConn:Disconnect(); godConn = nil end
 end
-
--- Hook in on respawn so godmode follows new characters
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(1)
-    if CONFIG.GODMODE then
-        clearGodmode()
-        applyGodmode()
-    end
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if CONFIG.GODMODE then stopGod(); applyGod() end
 end)
-
-if CONFIG.GODMODE then applyGodmode() end
+if CONFIG.GODMODE then applyGod() end
 
 -- ============================================================
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag11"
+sg.Name = "LT2_CutDiag12"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 600, 0, 500)
-frame.Position = UDim2.new(0.5, -300, 0.5, -250)
+frame.Size = UDim2.new(0, 560, 0, 460)
+frame.Position = UDim2.new(0.5, -280, 0.5, -230)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -89,7 +69,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v11 - godmode"
+title.Text = "LT2 Cut Diagnostic v12 - activate test"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -116,7 +96,7 @@ local clearBtn = mkBtn("Clear",      120, 32, 55, 30, Color3.fromRGB(150, 80, 80
 local equipBtn = mkBtn("Equip",      178, 32, 55, 30, Color3.fromRGB(200, 140, 50))
 local stopBtn  = mkBtn("STOP",       236, 32, 55, 30, Color3.fromRGB(200, 50, 50))
 local godBtn   = mkBtn("God: ON",    294, 32, 80, 30, Color3.fromRGB(60, 140, 100))
-local pickBtn  = mkBtn("Tap: ON",    376, 32, 80, 30, Color3.fromRGB(60, 140, 100))
+local toolBtn  = mkBtn("Dump Tool",  378, 32, 90, 30, Color3.fromRGB(120, 120, 200))
 
 local axeInfo = Instance.new("TextLabel")
 axeInfo.Size = UDim2.new(1, -470, 0, 30)
@@ -133,38 +113,21 @@ local lbl2 = Instance.new("TextLabel")
 lbl2.Size = UDim2.new(1, -8, 0, 18)
 lbl2.Position = UDim2.new(0, 4, 0, 66)
 lbl2.BackgroundTransparency = 1
-lbl2.Text = "Tap a plank in world OR use quick buttons:"
+lbl2.Text = "Pick a plank (list or tap). Script will NOT teleport you."
 lbl2.TextColor3 = Color3.fromRGB(200, 200, 200)
 lbl2.TextSize = 11
 lbl2.Font = Enum.Font.SourceSansBold
 lbl2.TextXAlignment = Enum.TextXAlignment.Left
 lbl2.Parent = frame
 
-local v_h1    = mkBtn("h=1",         4,   86, 90, 28, Color3.fromRGB(70, 90, 130))
-local v_hAuto = mkBtn("h=auto",      98,  86, 90, 28, Color3.fromRGB(60, 140, 80))
-local v_hHalf = mkBtn("h=half",      192, 86, 90, 28, Color3.fromRGB(70, 90, 130))
-local v_test  = mkBtn("Test 1",      286, 86, 90, 28, Color3.fromRGB(140, 90, 130))
-local v_far   = mkBtn("Fire No-TP",  380, 86, 110, 28, Color3.fromRGB(200, 140, 50))
-
-local lbl3 = Instance.new("TextLabel")
-lbl3.Size = UDim2.new(1, -8, 0, 18)
-lbl3.Position = UDim2.new(0, 4, 0, 116)
-lbl3.BackgroundTransparency = 1
-lbl3.Text = "Burst preset:"
-lbl3.TextColor3 = Color3.fromRGB(200, 200, 200)
-lbl3.TextSize = 11
-lbl3.Font = Enum.Font.SourceSansBold
-lbl3.TextXAlignment = Enum.TextXAlignment.Left
-lbl3.Parent = frame
-
-local p_10x1  = mkBtn("10x1s",  100, 114, 80, 24, Color3.fromRGB(60, 140, 80))
-local p_10x05 = mkBtn("10x0.5", 182, 114, 80, 24, Color3.fromRGB(70, 90, 130))
-local p_20x1  = mkBtn("20x1s",  264, 114, 80, 24, Color3.fromRGB(70, 90, 130))
-local p_30x05 = mkBtn("30x0.5", 346, 114, 80, 24, Color3.fromRGB(70, 90, 130))
+local v_act   = mkBtn("Test: Activate",    4,   86, 140, 28, Color3.fromRGB(60, 140, 80))
+local v_remote= mkBtn("Test: Remote",      148, 86, 140, 28, Color3.fromRGB(70, 90, 130))
+local v_both  = mkBtn("Test: Both",        292, 86, 140, 28, Color3.fromRGB(140, 90, 130))
+local v_bp    = mkBtn("Test: BP Remote",   436, 86, 120, 28, Color3.fromRGB(140, 100, 60))
 
 local logBox = Instance.new("ScrollingFrame")
-logBox.Size = UDim2.new(1, -10, 1, -310)
-logBox.Position = UDim2.new(0, 5, 0, 148)
+logBox.Size = UDim2.new(1, -10, 1, -250)
+logBox.Position = UDim2.new(0, 5, 0, 124)
 logBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 6
@@ -178,8 +141,8 @@ layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = logBox
 
 local picker = Instance.new("ScrollingFrame")
-picker.Size = UDim2.new(1, -10, 0, 150)
-picker.Position = UDim2.new(0, 5, 1, -158)
+picker.Size = UDim2.new(1, -10, 0, 130)
+picker.Position = UDim2.new(0, 5, 1, -138)
 picker.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 picker.BorderSizePixel = 0
 picker.ScrollBarThickness = 6
@@ -245,19 +208,14 @@ local function findAxe()
     }
     for _, container in ipairs(order) do
         if container then
-            local ok, descendants = pcall(function()
-                return container:GetDescendants()
-            end)
-            if ok and descendants then
-                for _, d in ipairs(descendants) do
-                    if d:IsA("Tool") and not seen[d] then
-                        seen[d] = true
-                        local rn = (toolRealName(d) or ""):lower()
-                        local on = (d.Name or ""):lower()
-                        if rn:find("axe") or rn:find("hatchet")
-                           or on:find("axe") or on:find("hatchet") then
-                            return d
-                        end
+            for _, d in ipairs(container:GetDescendants()) do
+                if d:IsA("Tool") and not seen[d] then
+                    seen[d] = true
+                    local rn = (toolRealName(d) or ""):lower()
+                    local on = (d.Name or ""):lower()
+                    if rn:find("axe") or rn:find("hatchet")
+                       or on:find("axe") or on:find("hatchet") then
+                        return d
                     end
                 end
             end
@@ -312,186 +270,165 @@ local function getSize(plank)
 end
 
 local function getHP()
-    local char = LocalPlayer.Character
-    if not char then return 100 end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    return hum and hum.Health or 100
+    local c = LocalPlayer.Character
+    if not c then return 100 end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    return h and h.Health or 100
 end
 
--- ============================================================
---  TELEPORT — ground-based, no floating
--- ============================================================
-local function teleportToPlank(plank)
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return false end
-
+local function distanceToPlank(plank)
+    local c = LocalPlayer.Character
+    if not c then return -1 end
+    local root = c:FindFirstChild("HumanoidRootPart")
+    if not root then return -1 end
     local ws = getWoodSection(plank)
-    if not ws then return false end
-
-    -- Find the lowest point of the plank (bottom of the trunk)
-    local plankBottom = ws.Position.Y - (ws.Size.Y / 2)
-
-    -- Position ourselves to the side of the plank, on the ground
-    -- Offset perpendicular to the plank's up direction
-    local offsetDir = Vector3.new(1, 0, 0)
-    local goalPos = Vector3.new(
-        ws.Position.X + (offsetDir.X * CONFIG.GROUND_OFFSET),
-        plankBottom + 3, -- 3 studs above ground level of the plank
-        ws.Position.Z + (offsetDir.Z * CONFIG.GROUND_OFFSET)
-    )
-
-    -- Face the plank
-    local lookAt = Vector3.new(ws.Position.X, goalPos.Y, ws.Position.Z)
-    root.CFrame = CFrame.new(goalPos, lookAt)
-    root.AssemblyLinearVelocity = Vector3.zero
-    task.wait(CONFIG.TELEPORT_SETTLE)
-    return true
+    local pos = ws and ws.Position or plank:GetPivot().Position
+    return (root.Position - pos).Magnitude
 end
 
 local function ensureEquipped(axe)
     if not axe or not axe.Parent then return false end
-    local char = LocalPlayer.Character
-    if not char then return false end
-    if axe:IsDescendantOf(char) then return true end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    pcall(function() hum:EquipTool(axe) end)
-    task.wait(CONFIG.EQUIP_SETTLE)
-    return axe:IsDescendantOf(char)
+    local c = LocalPlayer.Character
+    if not c then return false end
+    if axe:IsDescendantOf(c) then return true end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if not h then return false end
+    pcall(function() h:EquipTool(axe) end)
+    task.wait(0.3)
+    return axe:IsDescendantOf(c)
 end
 
 -- ============================================================
---  BURST
+--  METHODS
 -- ============================================================
-local function fireBurst(plank, axe, height, cuts, delay)
+local function methodActivate(axe, plank)
+    -- Just call Tool:Activate(). The tool's own AxeClient script should fire the cut.
+    if not axe then return false end
+    if not axe:IsDescendantOf(LocalPlayer.Character) then
+        return false, "not equipped"
+    end
+    local ok, err = pcall(function() axe:Activate() end)
+    if not ok then return false, tostring(err) end
+    return true
+end
+
+local function methodRemote(axe, plank, toolSource)
+    -- Original hand-fired remote.
+    local tool = axe
+    if toolSource == "backpack" then
+        local bp = LocalPlayer:FindFirstChild("Backpack")
+        if bp then
+            -- Temporarily unequip
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if h and axe:IsDescendantOf(c) then
+                pcall(function() h:UnequipTools() end)
+                task.wait(0.1)
+            end
+            local bpTool = bp:FindFirstChild(axe.Name)
+            if bpTool then tool = bpTool end
+        end
+    end
     local cutEvent = plank:FindFirstChild("CutEvent")
-    if not cutEvent then log("!! No CutEvent.") return 0 end
-    if not axe then log("!! No axe ref.") return 0 end
+    if not cutEvent then return false, "no CutEvent" end
+    local payload = {
+        height = 1,
+        faceVector = Vector3.new(1, 0, 0),
+        cooldown = 0.23737628459930421,
+        sectionId = 1,
+        hitPoints = 1.2,
+        tool = tool,
+        cuttingClass = "Axe",
+    }
+    local ok, err = pcall(function()
+        RemoteProxy:FireServer(cutEvent, payload)
+    end)
+    if not ok then return false, tostring(err) end
+    return true
+end
 
-    log("Firing with: " .. toolRealName(axe))
+-- ============================================================
+--  TEST RUNNER
+-- ============================================================
+local busy = false
 
-    local fired = 0
+local function testOne(plank, method)
+    if busy then return end
+    busy = true
+
+    log("========== TEST (" .. method .. ") ==========")
+    log("Plank: " .. plank.Name .. "  wood=" .. getWoodType(plank))
+    local before = getSize(plank)
+    log("BEFORE size=" .. (before and fmtVec(before) or "?"))
+
+    local axe = findAxe()
+    if not axe then
+        log("!! No axe."); busy = false; return
+    end
+    log("Axe: " .. toolRealName(axe))
+
+    -- Equip the axe (needed for Activate; harmless for remote)
+    ensureEquipped(axe)
+    task.wait(0.3)
+
+    -- Re-resolve the axe ref (equip can move it)
+    axe = findAxe()
+    if not axe then
+        log("!! Axe vanished after equip."); busy = false; return
+    end
+
+    log(("Distance to plank: %.2f"):format(distanceToPlank(plank)))
+    log(("HP: %.0f"):format(getHP()))
+
+    local cuts = CONFIG.CUTS_PER_BURST
+    local delay = CONFIG.BURST_DELAY
+
     for i = 1, cuts do
         if not plank.Parent then
-            log("  plank gone at " .. i); break
+            log("  plank gone at cut " .. i); break
         end
-        local hp = getHP()
-        if hp < 10 then
-            log(("  HP %.0f, aborting"):format(hp)); break
+        if getHP() < CONFIG.MIN_HP then
+            log(("  HP %.0f < %d, abort"):format(getHP(), CONFIG.MIN_HP))
+            break
         end
 
-        local payload = {
-            height = height,
-            faceVector = CONFIG.FACE_VECTOR,
-            cooldown = CONFIG.COOLDOWN,
-            sectionId = CONFIG.SECTION_ID,
-            hitPoints = CONFIG.HIT_POINTS,
-            tool = axe,
-            cuttingClass = CONFIG.CUTTING_CLASS,
-        }
+        local ok, err
+        if method == "activate" then
+            ok, err = methodActivate(axe, plank)
+        elseif method == "remote" then
+            ok, err = methodRemote(axe, plank, "equipped")
+        elseif method == "both" then
+            local ok1 = methodActivate(axe, plank)
+            task.wait(0.1)
+            local ok2 = methodRemote(axe, plank, "equipped")
+            ok = ok1 or ok2
+        elseif method == "bp_remote" then
+            ok, err = methodRemote(axe, plank, "backpack")
+        end
 
-        local ok, err = pcall(function()
-            RemoteProxy:FireServer(cutEvent, payload)
-        end)
         if ok then
-            fired = fired + 1
-            log(("  cut %d/%d fired  hp=%.0f"):format(i, cuts, hp))
+            log(("  cut %d/%d  hp=%.0f"):format(i, cuts, getHP()))
         else
-            log(("  cut %d/%d ERROR: %s"):format(i, cuts, tostring(err)))
+            log(("  cut %d/%d FAIL: %s"):format(i, cuts, tostring(err)))
         end
 
         task.wait(delay)
     end
-    return fired
-end
 
--- ============================================================
---  TEST
--- ============================================================
-local busy = false
-
-local function autoHeightFor(plank)
-    local s = getSize(plank)
-    if not s then return 1 end
-    local maxDim = math.max(s.X, s.Y, s.Z)
-    local h = maxDim / 2 - 0.5
-    if h < 0.5 then h = 0.5 end
-    if h > 2.5 then h = 2.5 end
-    return h
-end
-
-local function testOne(plank, heightMode, cuts, delay, skipTeleport)
-    if busy then return end
-    busy = true
-
-    log("========== TEST ==========")
-    log("Plank: " .. plank.Name .. "  wood=" .. getWoodType(plank))
-
-    local sizeBefore = getSize(plank)
-    log("BEFORE size=" .. (sizeBefore and fmtVec(sizeBefore) or "?"))
-
-    local axe = findAxe()
-    if not axe then
-        log("!! No axe found.")
-        busy = false
-        return
-    end
-    log("Cached axe: " .. toolRealName(axe))
-
-    ensureEquipped(axe)
-
-    if skipTeleport then
-        log("Skipping teleport (fire from wherever you are).")
-    else
-        teleportToPlank(plank)
-    end
-
-    if not axe or not axe.Parent then
-        log("  axe orphaned, re-finding...")
-        axe = findAxe()
-        if axe then
-            ensureEquipped(axe)
-        else
-            log("  !! still no axe")
-            busy = false
-            return
-        end
-    end
-
-    local h
-    if heightMode == "auto" then
-        h = autoHeightFor(plank)
-        log(("auto height = %.2f"):format(h))
-    elseif heightMode == "half" then
-        h = sizeBefore and math.max(sizeBefore.X, sizeBefore.Y, sizeBefore.Z) / 2 or 1
-        log(("half height = %.2f"):format(h))
-    else
-        h = heightMode or 1
-    end
-
-    local c = cuts or CONFIG.CUTS_PER_BURST
-    local d = delay or CONFIG.BURST_DELAY
-    log(("Firing %d cuts @ %.2fs, h=%s"):format(c, d, tostring(h)))
-
-    local fired = fireBurst(plank, axe, h, c, d)
-    log(("Fired %d/%d"):format(fired, c))
     task.wait(1.0)
-
     if plank.Parent then
-        local afterSize = getSize(plank)
-        log("AFTER  size=" .. (afterSize and fmtVec(afterSize) or "?"))
-        if sizeBefore and afterSize then
-            local diff = (sizeBefore - afterSize).Magnitude
-            if diff > 0.05 then
-                log(("*** CUT WORKED (diff %.2f) ***"):format(diff))
+        local after = getSize(plank)
+        log("AFTER  size=" .. (after and fmtVec(after) or "?"))
+        if before and after then
+            local d = (before - after).Magnitude
+            if d > 0.05 then
+                log(("*** WORKED! diff=%.2f ***"):format(d))
             else
                 log("No size change.")
             end
         end
     else
-        log("Plank DESTROYED - cut worked!")
+        log("Plank DESTROYED!")
     end
     log("========== DONE ==========")
     busy = false
@@ -501,8 +438,8 @@ end
 --  BUTTONS
 -- ============================================================
 local function refreshAxeLabel()
-    local axe = findAxe()
-    axeInfo.Text = axe and ("axe: " .. toolRealName(axe)) or "axe: NONE"
+    local a = findAxe()
+    axeInfo.Text = a and ("axe: " .. toolRealName(a)) or "axe: NONE"
 end
 
 local function runListPlanks()
@@ -510,33 +447,30 @@ local function runListPlanks()
         if c:IsA("TextButton") then c:Destroy() end
     end
     refreshAxeLabel()
-
     local planks = findAllPlanks()
     log(("Found %d plank(s)."):format(#planks))
     if #planks == 0 then picker.Visible = false return end
-
     table.sort(planks, function(a, b)
-        local sa, sb = getSize(a), getSize(b)
-        return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
+        return (getSize(a) and getSize(a).Magnitude or 0) >
+               (getSize(b) and getSize(b).Magnitude or 0)
     end)
-
     for i, p in ipairs(planks) do
         local s = getSize(p)
-        local wood = getWoodType(p)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -6, 0, 30)
-        btn.BorderSizePixel = 0
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.TextSize = 12
-        btn.Font = Enum.Font.Code
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        btn.Text = ("  #%d  [%s]  %s"):format(i, wood, s and fmtVec(s) or "?")
-        btn.Parent = picker
-        btn.Activated:Connect(function()
+        local w = getWoodType(p)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -6, 0, 28)
+        b.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        b.BorderSizePixel = 0
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
+        b.TextSize = 11
+        b.Font = Enum.Font.Code
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.Text = ("  #%d [%s] %s"):format(i, w, s and fmtVec(s) or "?")
+        b.Parent = picker
+        b.Activated:Connect(function()
             picker.Visible = false
-            log("Picked #" .. i .. " (" .. wood .. ")")
-            testOne(p, 1)
+            -- default: activate method
+            testOne(p, "activate")
         end)
     end
     picker.Visible = true
@@ -558,13 +492,9 @@ clearBtn.Activated:Connect(function()
 end)
 
 equipBtn.Activated:Connect(function()
-    local axe = findAxe()
-    if not axe then log("!! No axe.") return end
-    if ensureEquipped(axe) then
-        log("Equipped: " .. toolRealName(axe))
-    else
-        log("!! Equip failed.")
-    end
+    local a = findAxe()
+    if not a then log("!! No axe.") return end
+    if ensureEquipped(a) then log("Equipped: " .. toolRealName(a)) end
     refreshAxeLabel()
 end)
 
@@ -573,68 +503,48 @@ stopBtn.Activated:Connect(function()
     log("Stopped.")
 end)
 
--- Godmode toggle
 godBtn.Activated:Connect(function()
     CONFIG.GODMODE = not CONFIG.GODMODE
     if CONFIG.GODMODE then
         godBtn.Text = "God: ON"
         godBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 100)
-        applyGodmode()
-        log("Godmode ON.")
+        applyGod(); log("Godmode ON.")
     else
         godBtn.Text = "God: OFF"
         godBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 60)
-        clearGodmode()
-        log("Godmode OFF.")
+        stopGod(); log("Godmode OFF.")
     end
 end)
 
-local function pickBiggest(mode, cuts, delay, skipTp)
+toolBtn.Activated:Connect(function()
+    local a = findAxe()
+    if not a then log("!! No axe.") return end
+    log("=== TOOL DUMP: " .. a.Name .. " ===")
+    for _, c in ipairs(a:GetDescendants()) do
+        log(("  %s  [%s]"):format(c.Name, c.ClassName))
+    end
+    log("=== END DUMP ===")
+end)
+
+-- Quick test buttons — pick biggest plank
+local function pickBiggest(method)
     local planks = findAllPlanks()
     if #planks == 0 then return end
     table.sort(planks, function(a, b)
         return (getSize(a) and getSize(a).Magnitude or 0) >
                (getSize(b) and getSize(b).Magnitude or 0)
     end)
-    testOne(planks[1], mode, cuts, delay, skipTp)
+    testOne(planks[1], method)
 end
 
-v_h1.Activated:Connect(function() pickBiggest(1) end)
-v_hAuto.Activated:Connect(function() pickBiggest("auto") end)
-v_hHalf.Activated:Connect(function() pickBiggest("half") end)
-v_test.Activated:Connect(function() pickBiggest(1, 1, 0) end)
-v_far.Activated:Connect(function() pickBiggest(1, 10, 1.0, true) end)
-
-p_10x1.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 10; CONFIG.BURST_DELAY = 1.0
-    log("Preset: 10 @ 1s")
-end)
-p_10x05.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 10; CONFIG.BURST_DELAY = 0.5
-    log("Preset: 10 @ 0.5s")
-end)
-p_20x1.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 20; CONFIG.BURST_DELAY = 1.0
-    log("Preset: 20 @ 1s")
-end)
-p_30x05.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 30; CONFIG.BURST_DELAY = 0.5
-    log("Preset: 30 @ 0.5s")
-end)
+v_act.Activated:Connect(function() pickBiggest("activate") end)
+v_remote.Activated:Connect(function() pickBiggest("remote") end)
+v_both.Activated:Connect(function() pickBiggest("both") end)
+v_bp.Activated:Connect(function() pickBiggest("bp_remote") end)
 
 -- ============================================================
 --  TAP-TO-PICK
 -- ============================================================
-local pickEnabled = true
-
-pickBtn.Activated:Connect(function()
-    pickEnabled = not pickEnabled
-    pickBtn.Text = "Tap: " .. (pickEnabled and "ON" or "OFF")
-    pickBtn.BackgroundColor3 = pickEnabled
-        and Color3.fromRGB(60, 140, 100)
-        or Color3.fromRGB(120, 60, 60)
-end)
-
 local function raycastFromScreen(pos)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
@@ -642,69 +552,55 @@ local function raycastFromScreen(pos)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { sg, LocalPlayer.Character }
-    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
-    return result and result.Instance, result and result.Position or nil
+    local r = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
+    return r and r.Instance, r and r.Position or nil
 end
 
 local function findPlankNear(worldPos, radius)
-    local planks = findAllPlanks()
-    local bestPlank, bestDist = nil, math.huge
-    for _, p in ipairs(planks) do
+    local best, bestD = nil, math.huge
+    for _, p in ipairs(findAllPlanks()) do
         local ws = getWoodSection(p)
         if ws then
-            local localPos = ws.CFrame:PointToObjectSpace(worldPos)
+            local lp = ws.CFrame:PointToObjectSpace(worldPos)
             local half = ws.Size / 2
-            local clamped = Vector3.new(
-                math.clamp(localPos.X, -half.X, half.X),
-                math.clamp(localPos.Y, -half.Y, half.Y),
-                math.clamp(localPos.Z, -half.Z, half.Z)
-            )
-            local worldClosest = ws.CFrame:PointToWorldSpace(clamped)
-            local d = (worldClosest - worldPos).Magnitude
-            if d < bestDist then
-                bestDist = d
-                bestPlank = p
-            end
+            local cl = Vector3.new(
+                math.clamp(lp.X, -half.X, half.X),
+                math.clamp(lp.Y, -half.Y, half.Y),
+                math.clamp(lp.Z, -half.Z, half.Z))
+            local wp = ws.CFrame:PointToWorldSpace(cl)
+            local d = (wp - worldPos).Magnitude
+            if d < bestD then bestD = d; best = p end
         end
     end
-    if bestPlank and bestDist <= radius then
-        return bestPlank, bestDist
-    end
-    return nil, bestDist
+    if best and bestD <= radius then return best, bestD end
+    return nil, bestD
 end
 
-local function handleTap(screenPos, gameProcessed)
-    if gameProcessed then return end
-    if not pickEnabled then return end
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1
+       and input.UserInputType ~= Enum.UserInputType.Touch then return end
 
-    local guiObjs = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(screenPos.X, screenPos.Y)
+    local pos = input.Position
+    local guiObjs = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(pos.X, pos.Y)
     for _, obj in ipairs(guiObjs) do
         if obj:IsDescendantOf(sg) then return end
     end
 
-    local hit, hitPos = raycastFromScreen(screenPos)
+    local hit, hitPos = raycastFromScreen(pos)
     if not hit then return end
-
     local model = hit:FindFirstAncestorOfClass("Model")
     if model and isPlank(model) then
-        log("Tapped plank: " .. model.Name .. " [" .. getWoodType(model) .. "]")
-        testOne(model, 1)
+        log("Tapped: " .. model.Name .. " [" .. getWoodType(model) .. "]")
+        testOne(model, "activate")
         return
     end
-
-    local nearby, dist = findPlankNear(hitPos, CONFIG.TAP_SEARCH_RADIUS)
+    local nearby = findPlankNear(hitPos, CONFIG.TAP_RADIUS)
     if nearby then
-        log(("Found nearby: [%s] dist=%.2f"):format(getWoodType(nearby), dist))
-        testOne(nearby, 1)
+        log("Nearby: " .. getWoodType(nearby))
+        testOne(nearby, "activate")
     else
-        log("No owned plank within radius of tap.")
-    end
-end
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        handleTap(input.Position, gp)
+        log("No plank nearby.")
     end
 end)
 
@@ -712,7 +608,8 @@ end)
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v11 ready.")
-log("Godmode: " .. (CONFIG.GODMODE and "ON" or "OFF"))
-log("Ground-teleport: stands NEXT TO the plank, not above it.")
-log("Try 'Fire No-TP' to test firing without teleporting at all.")
+log("v12 ready. NO teleport. Godmode ON.")
+log("Tests fire from wherever you are standing.")
+log("'Test: Activate' calls axe:Activate() - the game's own cut path.")
+log("'Dump Tool' lists everything inside the tool so we can see AxeClient.")
+log("Tap a plank, or press a Test button.")
