@@ -1,6 +1,5 @@
--- LT2 Cut Diagnostic v6
--- Fires a burst of cut remotes after teleporting to the plank.
--- Clean rewrite — no goto, no nested pcall issues.
+-- LT2 Cut Diagnostic v7
+-- 10 cuts, 1 second apart. Cached axe reference. Safe teleport.
 
 -- ============================================================
 --  SERVICES
@@ -13,17 +12,18 @@ local Interaction = ReplicatedStorage:WaitForChild("Interaction")
 local RemoteProxy = Interaction:WaitForChild("RemoteProxy")
 
 -- ============================================================
---  CONFIG  (tweak here)
+--  CONFIG
 -- ============================================================
 local CONFIG = {
-    CUTS_PER_BURST = 20,        -- how many remote fires per test
-    BURST_DELAY    = 0.06,      -- seconds between fires
-    TELEPORT_OFFSET = Vector3.new(3, 2, 0), -- side+up from plank center
+    CUTS_PER_BURST = 10,
+    BURST_DELAY    = 1.0,                        -- 1 second between cuts
+    TELEPORT_OFFSET = Vector3.new(2, 2, 0),      -- closer, safer
     FACE_VECTOR    = Vector3.new(1, 0, 0),
     COOLDOWN       = 0.23737628459930421,
     SECTION_ID     = 1,
     HIT_POINTS     = 1.2,
     CUTTING_CLASS  = "Axe",
+    MIN_HP_TO_CONTINUE = 30,                     -- stop burst if HP drops below
 }
 
 -- ============================================================
@@ -42,7 +42,7 @@ end
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag6"
+sg.Name = "LT2_CutDiag7"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -59,13 +59,13 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v6"
+title.Text = "LT2 Cut Diagnostic v7 - 10 cuts @ 1s"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
 title.Parent = frame
 
-local function mkBtn(text, x, y, w, h, color, parent)
+local function mkBtn(text, x, y, w, h, color)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0, w, 0, h)
     b.Position = UDim2.new(0, x, 0, y)
@@ -76,16 +76,15 @@ local function mkBtn(text, x, y, w, h, color, parent)
     b.TextSize = 12
     b.Font = Enum.Font.SourceSansBold
     b.TextWrapped = true
-    b.Parent = parent or frame
+    b.Parent = frame
     return b
 end
 
--- Row 1
-local listBtn  = mkBtn("List Planks",   4,   32, 110, 30, Color3.fromRGB(60, 120, 200))
-local copyBtn  = mkBtn("Copy Log",      118, 32, 90,  30, Color3.fromRGB(60, 180, 100))
-local clearBtn = mkBtn("Clear",         212, 32, 70,  30, Color3.fromRGB(150, 80, 80))
-local equipBtn = mkBtn("Equip Axe",     286, 32, 90,  30, Color3.fromRGB(200, 140, 50))
-local stopBtn  = mkBtn("STOP",          380, 32, 60,  30, Color3.fromRGB(200, 50, 50))
+local listBtn  = mkBtn("List Planks", 4,   32, 110, 30, Color3.fromRGB(60, 120, 200))
+local copyBtn  = mkBtn("Copy Log",    118, 32, 90,  30, Color3.fromRGB(60, 180, 100))
+local clearBtn = mkBtn("Clear",       212, 32, 70,  30, Color3.fromRGB(150, 80, 80))
+local equipBtn = mkBtn("Equip Axe",   286, 32, 90,  30, Color3.fromRGB(200, 140, 50))
+local stopBtn  = mkBtn("STOP",        380, 32, 60,  30, Color3.fromRGB(200, 50, 50))
 
 local axeInfo = Instance.new("TextLabel")
 axeInfo.Size = UDim2.new(1, -444, 0, 30)
@@ -98,42 +97,38 @@ axeInfo.Font = Enum.Font.Code
 axeInfo.TextXAlignment = Enum.TextXAlignment.Left
 axeInfo.Parent = frame
 
--- Row 2 — quick tests
 local lbl2 = Instance.new("TextLabel")
 lbl2.Size = UDim2.new(1, -8, 0, 18)
 lbl2.Position = UDim2.new(0, 4, 0, 66)
 lbl2.BackgroundTransparency = 1
-lbl2.Text = "Quick test on largest plank (teleport + burst):"
+lbl2.Text = "Quick test (auto picks largest plank, teleports, fires burst):"
 lbl2.TextColor3 = Color3.fromRGB(200, 200, 200)
 lbl2.TextSize = 11
 lbl2.Font = Enum.Font.SourceSansBold
 lbl2.TextXAlignment = Enum.TextXAlignment.Left
 lbl2.Parent = frame
 
-local v_h1    = mkBtn("h=1",           4,   86, 90, 28, Color3.fromRGB(70, 90, 130))
-local v_hHalf = mkBtn("h=half",        98,  86, 90, 28, Color3.fromRGB(70, 90, 130))
-local v_h025  = mkBtn("h=0.25",        192, 86, 90, 28, Color3.fromRGB(70, 90, 130))
-local v_sweep = mkBtn("sweep 0.2-2",   286, 86, 120, 28, Color3.fromRGB(140, 90, 130))
+local v_h1    = mkBtn("h=1",          4,   86, 100, 28, Color3.fromRGB(70, 90, 130))
+local v_hHalf = mkBtn("h=half",       108, 86, 100, 28, Color3.fromRGB(70, 90, 130))
+local v_h025  = mkBtn("h=0.25",       212, 86, 100, 28, Color3.fromRGB(70, 90, 130))
+local v_test  = mkBtn("Test 1 cut",   316, 86, 100, 28, Color3.fromRGB(140, 90, 130))
 
--- Row 3 — burst controls
 local lbl3 = Instance.new("TextLabel")
 lbl3.Size = UDim2.new(1, -8, 0, 18)
 lbl3.Position = UDim2.new(0, 4, 0, 116)
 lbl3.BackgroundTransparency = 1
-lbl3.Text = "Cuts per burst:"
+lbl3.Text = "Burst preset:"
 lbl3.TextColor3 = Color3.fromRGB(200, 200, 200)
 lbl3.TextSize = 11
 lbl3.Font = Enum.Font.SourceSansBold
 lbl3.TextXAlignment = Enum.TextXAlignment.Left
 lbl3.Parent = frame
 
-local b5   = mkBtn("5",    120, 114, 50, 24, Color3.fromRGB(70, 90, 130))
-local b10  = mkBtn("10",   174, 114, 50, 24, Color3.fromRGB(70, 90, 130))
-local b20  = mkBtn("20",   228, 114, 50, 24, Color3.fromRGB(60, 140, 80))
-local b40  = mkBtn("40",   282, 114, 50, 24, Color3.fromRGB(70, 90, 130))
-local b80  = mkBtn("80",   336, 114, 50, 24, Color3.fromRGB(70, 90, 130))
+local p_10x1  = mkBtn("10x1s",  100, 114, 80, 24, Color3.fromRGB(60, 140, 80))
+local p_10x05 = mkBtn("10x0.5s",182, 114, 80, 24, Color3.fromRGB(70, 90, 130))
+local p_20x1  = mkBtn("20x1s",  264, 114, 80, 24, Color3.fromRGB(70, 90, 130))
+local p_30x05 = mkBtn("30x0.5s",346, 114, 80, 24, Color3.fromRGB(70, 90, 130))
 
--- Log
 local logBox = Instance.new("ScrollingFrame")
 logBox.Size = UDim2.new(1, -10, 1, -310)
 logBox.Position = UDim2.new(0, 5, 0, 148)
@@ -149,7 +144,6 @@ layout.Padding = UDim.new(0, 2)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = logBox
 
--- Picker
 local picker = Instance.new("ScrollingFrame")
 picker.Size = UDim2.new(1, -10, 0, 150)
 picker.Position = UDim2.new(0, 5, 1, -158)
@@ -216,6 +210,11 @@ local function gatherTools()
     }
     for _, c in ipairs(containers) do
         if c then
+            for _, d in ipairs(c:GetChildren()) do
+                if d:IsA("Tool") then
+                    table.insert(out, d)
+                end
+            end
             for _, d in ipairs(c:GetDescendants()) do
                 if d:IsA("Tool") then
                     table.insert(out, d)
@@ -249,9 +248,7 @@ local function findAllPlanks()
     local seen = {}
     local pm = workspace:FindFirstChild("PlayerModels")
     local roots = { workspace }
-    if pm then
-        table.insert(roots, pm)
-    end
+    if pm then table.insert(roots, pm) end
     for _, root in ipairs(roots) do
         for _, m in ipairs(root:GetDescendants()) do
             if m:IsA("Model") and not seen[m] and isPlank(m) then
@@ -265,9 +262,7 @@ end
 
 local function getWoodSection(plank)
     local ws = plank:FindFirstChild("WoodSection")
-    if ws and ws:IsA("BasePart") then
-        return ws
-    end
+    if ws and ws:IsA("BasePart") then return ws end
     return nil
 end
 
@@ -279,32 +274,53 @@ local function getSize(plank)
     return nil
 end
 
+local function getHP()
+    local char = LocalPlayer.Character
+    if not char then return 100 end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return 100 end
+    return hum.Health
+end
+
 -- ============================================================
---  TELEPORT
+--  TELEPORT (safe: keeps player right above plank)
 -- ============================================================
 local function teleportToPlank(plank)
     local char = LocalPlayer.Character
     if not char then return false end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
+
     local ws = getWoodSection(plank)
     local targetPos = ws and ws.Position or plank:GetPivot().Position
+
+    -- Slight offset to the side so the plank is in front of the player
     local goal = targetPos + CONFIG.TELEPORT_OFFSET
     root.CFrame = CFrame.new(goal, targetPos)
-    task.wait(0.15)
+    root.AssemblyLinearVelocity = Vector3.zero
+    task.wait(0.2)
     return true
 end
 
 -- ============================================================
---  BURST FIRE
+--  EQUIP
 -- ============================================================
-local function fireBurst(plank, height)
-    local axe = findAxe()
-    if not axe then
-        log("!! No axe.")
-        return 0
-    end
+local function ensureEquipped(axe)
+    if not axe or not axe.Parent then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if axe.Parent == char then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    pcall(function() hum:EquipTool(axe) end)
+    task.wait(0.15)
+    return axe.Parent == char
+end
 
+-- ============================================================
+--  BURST FIRE (uses cached axe)
+-- ============================================================
+local function fireBurst(plank, axe, height, burstCount, burstDelay)
     local cutEvent = plank:FindFirstChild("CutEvent")
     if not cutEvent then
         log("!! No CutEvent on plank.")
@@ -312,9 +328,32 @@ local function fireBurst(plank, height)
     end
 
     local fired = 0
-    for i = 1, CONFIG.CUTS_PER_BURST do
-        if not plank.Parent then break end
+    for i = 1, burstCount do
+        if not plank.Parent then
+            log("  plank gone at cut " .. i)
+            break
+        end
 
+        -- HP safety
+        if getHP() < CONFIG.MIN_HP_TO_CONTINUE then
+            log("  HP low (" .. math.floor(getHP()) .. "), aborting burst")
+            break
+        end
+
+        -- Verify axe still valid
+        if not axe or not axe.Parent then
+            axe = findAxe()
+            if not axe then
+                log("  axe lost at cut " .. i)
+                break
+            end
+            log("  re-resolved axe: " .. toolRealName(axe))
+        end
+
+        -- Make sure it's equipped
+        ensureEquipped(axe)
+
+        -- Fire
         local payload = {
             height = height,
             faceVector = CONFIG.FACE_VECTOR,
@@ -324,16 +363,19 @@ local function fireBurst(plank, height)
             tool = axe,
             cuttingClass = CONFIG.CUTTING_CLASS,
         }
-
         local ok = pcall(function()
             RemoteProxy:FireServer(cutEvent, payload)
         end)
         if ok then
             fired = fired + 1
+            log(("  cut %d/%d fired (h=%s)"):format(i, burstCount, tostring(height)))
+        else
+            log(("  cut %d/%d FAILED"):format(i, burstCount))
         end
 
-        task.wait(CONFIG.BURST_DELAY)
+        task.wait(burstDelay)
     end
+
     return fired
 end
 
@@ -342,33 +384,26 @@ end
 -- ============================================================
 local busy = false
 
-local function testOne(plank, heightOverride)
+local function testOne(plank, heightOverride, overrideCuts, overrideDelay)
     if busy then return end
     busy = true
 
     log("========== TEST ==========")
     log("Plank: " .. plank.Name)
 
-    local size = getSize(plank)
-    log("BEFORE size=" .. (size and fmtVec(size) or "?"))
+    local sizeBefore = getSize(plank)
+    log("BEFORE size=" .. (sizeBefore and fmtVec(sizeBefore) or "?"))
 
     local axe = findAxe()
     if not axe then
-        log("!! No axe.")
+        log("!! No axe anywhere. Equip one first.")
         busy = false
         return
     end
     log("Axe: " .. toolRealName(axe))
 
-    -- Equip
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and axe.Parent ~= char then
-            pcall(function() hum:EquipTool(axe) end)
-            task.wait(0.1)
-        end
-    end
+    -- Equip FIRST (before teleport so the tool follows)
+    ensureEquipped(axe)
 
     -- Teleport
     teleportToPlank(plank)
@@ -377,8 +412,8 @@ local function testOne(plank, heightOverride)
     local h = heightOverride
     if not h then
         h = 1
-        if size then
-            local maxDim = math.max(size.X, size.Y, size.Z)
+        if sizeBefore then
+            local maxDim = math.max(sizeBefore.X, sizeBefore.Y, sizeBefore.Z)
             if maxDim > 4 then
                 h = maxDim / 2
                 log(("Long plank (%.2f) — using h=%.2f"):format(maxDim, h))
@@ -386,86 +421,33 @@ local function testOne(plank, heightOverride)
         end
     end
 
-    -- Burst
-    log(("Firing %d cuts at h=%s ..."):format(CONFIG.CUTS_PER_BURST, tostring(h)))
-    local fired = fireBurst(plank, h)
-    log(("Fired %d remote(s)."):format(fired))
+    local cuts = overrideCuts or CONFIG.CUTS_PER_BURST
+    local delay = overrideDelay or CONFIG.BURST_DELAY
+    log(("Firing %d cuts, %.2fs apart, h=%s ..."):format(cuts, delay, tostring(h)))
 
-    -- Wait for server
+    local fired = fireBurst(plank, axe, h, cuts, delay)
+    log(("Fired %d/%d remote(s)."):format(fired, cuts))
+
+    -- Wait for the server to process
     task.wait(1.0)
 
-    -- Check result
     if plank.Parent then
-        local afterSize = getSize(plank)
-        log("AFTER  size=" .. (afterSize and fmtVec(afterSize) or "?"))
-        if size and afterSize then
-            local diff = (size - afterSize).Magnitude
+        local sizeAfter = getSize(plank)
+        log("AFTER  size=" .. (sizeAfter and fmtVec(sizeAfter) or "?"))
+        if sizeBefore and sizeAfter then
+            local diff = (sizeBefore - sizeAfter).Magnitude
             if diff > 0.05 then
-                log(("*** SIZE CHANGED by %.2f — CUT WORKED! ***"):format(diff))
+                log(("*** SIZE CHANGED by %.2f - CUT WORKED! ***"):format(diff))
             else
                 log("No size change.")
             end
         end
     else
-        log("Plank DESTROYED — cut worked!")
+        log("Plank DESTROYED - cut worked!")
     end
 
     log("========== DONE ==========")
     busy = false
-end
-
--- ============================================================
---  SWEEP
--- ============================================================
-local sweepRunning = false
-
-local function runSweep()
-    if sweepRunning then return end
-    local planks = findAllPlanks()
-    if #planks == 0 then
-        log("No planks.")
-        return
-    end
-    table.sort(planks, function(a, b)
-        local sa, sb = getSize(a), getSize(b)
-        return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
-    end)
-    local p = planks[1]
-    sweepRunning = true
-
-    task.spawn(function()
-        log("=== SWEEP 0.2..2.0 on " .. p.Name .. " ===")
-        local h = 0.2
-        while h <= 2.0 and sweepRunning do
-            if not p.Parent then
-                log("Plank gone during sweep.")
-                break
-            end
-            local sizeBefore = getSize(p)
-            teleportToPlank(p)
-            local fired = fireBurst(p, h)
-            task.wait(1.0)
-            if not p.Parent then
-                log(("h=%.2f  ->  PLANK DESTROYED (fired %d)"):format(h, fired))
-                break
-            end
-            local sizeAfter = getSize(p)
-            local changed = sizeBefore and sizeAfter
-                and (sizeBefore - sizeAfter).Magnitude > 0.05
-            log(("h=%.2f  before=%s  after=%s  %s"):format(
-                h,
-                sizeBefore and fmtVec(sizeBefore) or "?",
-                sizeAfter and fmtVec(sizeAfter) or "?",
-                changed and "<<< SUCCESS" or ""))
-            if changed then
-                log("SUCCESS at h=" .. h)
-                break
-            end
-            h = h + 0.2
-        end
-        sweepRunning = false
-        log("=== SWEEP DONE ===")
-    end)
 end
 
 -- ============================================================
@@ -482,9 +464,7 @@ end
 
 local function runListPlanks()
     for _, c in ipairs(picker:GetChildren()) do
-        if c:IsA("TextButton") then
-            c:Destroy()
-        end
+        if c:IsA("TextButton") then c:Destroy() end
     end
 
     refreshAxeLabel()
@@ -519,8 +499,7 @@ local function runListPlanks()
         else
             btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
         end
-        btn.Text = ("  #%d  size=%s%s"):format(
-            i, s and fmtVec(s) or "?", isIdeal and " *" or "")
+        btn.Text = ("  #%d  size=%s%s"):format(i, s and fmtVec(s) or "?", isIdeal and " *" or "")
         btn.Parent = picker
         btn.Activated:Connect(function()
             picker.Visible = false
@@ -538,8 +517,7 @@ copyBtn.Activated:Connect(function()
         log("!! No clipboard function in this executor.")
         return
     end
-    local text = table.concat(logBuffer, "\n")
-    local ok, err = pcall(function() setClipboard(text) end)
+    local ok, err = pcall(function() setClipboard(table.concat(logBuffer, "\n")) end)
     if ok then
         log(">> Copied " .. #logBuffer .. " lines.")
     else
@@ -550,9 +528,7 @@ end)
 clearBtn.Activated:Connect(function()
     logBuffer = {}
     for _, c in ipairs(logBox:GetChildren()) do
-        if c:IsA("TextLabel") then
-            c:Destroy()
-        end
+        if c:IsA("TextLabel") then c:Destroy() end
     end
 end)
 
@@ -562,23 +538,19 @@ equipBtn.Activated:Connect(function()
         log("!! No axe.")
         return
     end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum:EquipTool(axe)
+    if ensureEquipped(axe) then
         log("Equipped: " .. toolRealName(axe))
+    else
+        log("!! Equip failed.")
     end
 end)
 
 stopBtn.Activated:Connect(function()
     busy = false
-    sweepRunning = false
     log("Stopped.")
 end)
 
--- Quick tests
-local function pickBiggestAndTest(heightFn)
+local function pickBiggestAndTest(heightFn, cuts, delay)
     local planks = findAllPlanks()
     if #planks == 0 then
         log("No planks.")
@@ -590,7 +562,7 @@ local function pickBiggestAndTest(heightFn)
     end)
     local p = planks[1]
     local h = heightFn and heightFn(p) or 1
-    testOne(p, h)
+    testOne(p, h, cuts, delay)
 end
 
 v_h1.Activated:Connect(function()
@@ -609,35 +581,36 @@ v_h025.Activated:Connect(function()
     pickBiggestAndTest(function() return 0.25 end)
 end)
 
-v_sweep.Activated:Connect(runSweep)
+v_test.Activated:Connect(function()
+    pickBiggestAndTest(function() return 1 end, 1, 0) -- one cut, no delay
+end)
 
--- Burst size buttons
-b5.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 5
-    log("Cuts per burst = 5")
-end)
-b10.Activated:Connect(function()
+-- Burst preset buttons
+p_10x1.Activated:Connect(function()
     CONFIG.CUTS_PER_BURST = 10
-    log("Cuts per burst = 10")
+    CONFIG.BURST_DELAY = 1.0
+    log("Preset: 10 cuts @ 1s")
 end)
-b20.Activated:Connect(function()
+p_10x05.Activated:Connect(function()
+    CONFIG.CUTS_PER_BURST = 10
+    CONFIG.BURST_DELAY = 0.5
+    log("Preset: 10 cuts @ 0.5s")
+end)
+p_20x1.Activated:Connect(function()
     CONFIG.CUTS_PER_BURST = 20
-    log("Cuts per burst = 20")
+    CONFIG.BURST_DELAY = 1.0
+    log("Preset: 20 cuts @ 1s")
 end)
-b40.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 40
-    log("Cuts per burst = 40")
-end)
-b80.Activated:Connect(function()
-    CONFIG.CUTS_PER_BURST = 80
-    log("Cuts per burst = 80")
+p_30x05.Activated:Connect(function()
+    CONFIG.CUTS_PER_BURST = 30
+    CONFIG.BURST_DELAY = 0.5
+    log("Preset: 30 cuts @ 0.5s")
 end)
 
 -- ============================================================
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v6 ready.")
-log("Burst = 20 cuts per test by default.")
-log("Tap 'h=1' to test on your largest plank.")
-log("If no change, try 'sweep 0.2-2' or bump cuts per burst.")
+log("v7 ready.")
+log("Default: 10 cuts @ 1s between.")
+log("Pick a green plank from 'List Planks', or tap 'h=1'.")
