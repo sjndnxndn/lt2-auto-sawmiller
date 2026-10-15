@@ -1,5 +1,5 @@
--- LT2 Cut Diagnostic v2 - Mobile friendly
--- Buttons to list your planks, pick one, cut it, and log everything.
+-- LT2 Cut Diagnostic v3
+-- Finds the axe via ToolName StringValue child, and logs a real cut.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,9 +7,6 @@ local LocalPlayer = Players.LocalPlayer
 
 local RemoteProxy = ReplicatedStorage:WaitForChild("Interaction"):WaitForChild("RemoteProxy")
 
--- ============================================================
---  CLIPBOARD
--- ============================================================
 local setClipboard =
     (type(setclipboard) == "function" and setclipboard)
     or (type(toclipboard) == "function" and toclipboard)
@@ -20,7 +17,7 @@ local setClipboard =
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag2"
+sg.Name = "LT2_CutDiag3"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -37,14 +34,13 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 30)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v2"
+title.Text = "LT2 Cut Diagnostic v3"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
 title.Parent = frame
 
--- Button row
-local function mkBtn(text, x, w, color, parent)
+local function mkBtn(text, x, w, color)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0, w, 0, 32)
     b.Position = UDim2.new(0, x, 0, 32)
@@ -54,25 +50,25 @@ local function mkBtn(text, x, w, color, parent)
     b.TextColor3 = Color3.fromRGB(255, 255, 255)
     b.TextSize = 13
     b.Font = Enum.Font.SourceSansBold
-    b.Parent = parent
+    b.Parent = frame
     return b
 end
 
-local listBtn = mkBtn("List My Planks", 4, 130, Color3.fromRGB(60, 120, 200), frame)
-local copyBtn = mkBtn("Copy Log", 138, 100, Color3.fromRGB(60, 180, 100), frame)
-local clearBtn = mkBtn("Clear Log", 242, 100, Color3.fromRGB(150, 80, 80), frame)
+local listBtn  = mkBtn("List My Planks", 4,   130, Color3.fromRGB(60, 120, 200))
+local copyBtn  = mkBtn("Copy Log",       138, 100, Color3.fromRGB(60, 180, 100))
+local clearBtn = mkBtn("Clear Log",      242, 100, Color3.fromRGB(150, 80, 80))
+
 local axeInfo = Instance.new("TextLabel")
 axeInfo.Size = UDim2.new(1, -350, 0, 32)
 axeInfo.Position = UDim2.new(0, 348, 0, 32)
 axeInfo.BackgroundTransparency = 1
 axeInfo.Text = "axe: ?"
 axeInfo.TextColor3 = Color3.fromRGB(255, 200, 100)
-axeInfo.TextSize = 12
+axeInfo.TextSize = 11
 axeInfo.Font = Enum.Font.Code
 axeInfo.TextXAlignment = Enum.TextXAlignment.Left
 axeInfo.Parent = frame
 
--- Log
 local logBox = Instance.new("ScrollingFrame")
 logBox.Size = UDim2.new(1, -10, 1, -110)
 logBox.Position = UDim2.new(0, 5, 0, 68)
@@ -88,7 +84,6 @@ layout.Padding = UDim.new(0, 2)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = logBox
 
--- Plank picker (overlay list)
 local picker = Instance.new("ScrollingFrame")
 picker.Size = UDim2.new(1, -10, 0, 160)
 picker.Position = UDim2.new(0, 5, 1, -168)
@@ -138,50 +133,62 @@ local function fmtVec(v)
     return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
 end
 
---- Search the whole game for tools that could be an axe/hatchet.
-local function findAllTools()
-    local list = {}
-    local pack = LocalPlayer:FindFirstChild("Backpack")
-    if pack then
-        for _, i in ipairs(pack:GetChildren()) do
-            if i:IsA("Tool") then table.insert(list, i) end
-        end
+--- Return the "real" name of a tool: checks StringValue named "ToolName" first.
+local function toolRealName(tool)
+    local tn = tool:FindFirstChild("ToolName")
+    if tn and tn:IsA("StringValue") then
+        return tn.Value
     end
-    local char = LocalPlayer.Character
-    if char then
-        for _, i in ipairs(char:GetChildren()) do
-            if i:IsA("Tool") then table.insert(list, i) end
-        end
-    end
-    return list
+    return tool.Name
 end
 
+--- Search Player.Backpack, Player.Tools, and Character for tool-like objects.
+local function gatherTools()
+    local out = {}
+    local containers = {
+        LocalPlayer:FindFirstChild("Backpack"),
+        LocalPlayer:FindFirstChild("Tools"),
+        LocalPlayer.Character,
+    }
+    for _, c in ipairs(containers) do
+        if c then
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("Tool") then
+                    table.insert(out, d)
+                end
+            end
+        end
+    end
+    return out
+end
+
+--- Find an axe. Matches against real name (ToolName) AND the object's Name.
 local function findAxe()
-    for _, item in ipairs(findAllTools()) do
-        local n = item.Name:lower()
-        if n:find("axe") or n:find("hatchet") or n:find("saw") or n:find("chop") then
-            return item
+    for _, tool in ipairs(gatherTools()) do
+        local realName = (toolRealName(tool) or ""):lower()
+        local objName  = (tool.Name or ""):lower()
+        local function matches(s)
+            return s:find("axe") or s:find("hatchet") or s:find("saw")
+                or s:find("chop") or s:find("gingerbread")
+        end
+        if matches(realName) or matches(objName) then
+            return tool, toolRealName(tool)
         end
     end
     return nil
 end
 
---- A plank is a Model that: is owned by us AND has a CutEvent child AND is NOT the plot.
 local function isPlank(model)
     if not model or not model:IsA("Model") then return false end
     if not ownerMatches(model, LocalPlayer) then return false end
     return model:FindFirstChild("CutEvent") ~= nil
 end
 
---- Find every plank we own, anywhere in the game.
 local function findAllPlanks()
-    local found = {}
-    local seen = {}
-    -- Planes: workspace.PlayerModels usually contains all player objects
-    local roots = { workspace }
+    local found, seen = {}, {}
     local pm = workspace:FindFirstChild("PlayerModels")
+    local roots = { workspace }
     if pm then table.insert(roots, pm) end
-
     for _, root in ipairs(roots) do
         for _, m in ipairs(root:GetDescendants()) do
             if m:IsA("Model") and not seen[m] and isPlank(m) then
@@ -198,24 +205,20 @@ local function snapshot(model, tag)
     log(("[%s] name=%s"):format(tag, model.Name))
     if ok then log(("[%s] size=%s"):format(tag, fmtVec(size))) end
     log(("[%s] pivot=%s"):format(tag, fmtVec(model:GetPivot().Position)))
-    -- Only show interesting children
     local kids = {}
     for _, c in ipairs(model:GetChildren()) do
-        if c.ClassName == "ObjectValue"
-           or c.ClassName == "NumberValue"
-           or c.ClassName == "StringValue"
-           or c.Name == "CutEvent"
-           or c.Name == "Owner" then
+        if c.ClassName == "ObjectValue" or c.ClassName == "NumberValue"
+            or c.ClassName == "StringValue" or c.Name == "CutEvent"
+            or c.Name == "Owner" or c.Name == "WoodSection" then
             table.insert(kids, c.ClassName .. ":" .. c.Name)
         end
     end
     log(("[%s] key children: %s"):format(tag, table.concat(kids, ", ")))
-    local attrs = {}
-    for k, v in pairs(model:GetAttributes()) do
-        table.insert(attrs, k .. "=" .. tostring(v))
-    end
-    if #attrs > 0 then
-        log(("[%s] attrs: %s"):format(tag, table.concat(attrs, ", ")))
+    -- Also log WoodSection size (this is the actual wood part)
+    local ws = model:FindFirstChild("WoodSection")
+    if ws and ws:IsA("BasePart") then
+        log(("[%s] WoodSection.Size=%s"):format(tag, fmtVec(ws.Size)))
+        log(("[%s] WoodSection.CFrame.Pos=%s"):format(tag, fmtVec(ws.Position)))
     end
 end
 
@@ -232,35 +235,35 @@ local function runCutTest(plank)
     log("Time: " .. os.date("%Y-%m-%d %H:%M:%S"))
     snapshot(plank, "BEFORE")
 
-    local axe = findAxe()
+    local axe, realName = findAxe()
     if not axe then
-        log("!! No axe/hatchet/saw found. Tools in backpack:")
-        local tools = findAllTools()
-        if #tools == 0 then
-            log("   (backpack empty — equip an axe and try again)")
+        log("!! Still no axe found. Tools currently visible:")
+        local all = gatherTools()
+        if #all == 0 then
+            log("   (none — equip an axe so it appears in Backpack)")
         else
-            for _, t in ipairs(tools) do
-                log("   tool: " .. t.Name)
+            for _, t in ipairs(all) do
+                log(("   tool: obj=%s real=%s"):format(t.Name, tostring(toolRealName(t))))
             end
         end
         busy = false
         return
     end
-    log("Using tool: " .. axe.Name)
+    log("Using axe: " .. tostring(realName) .. "  (obj=" .. axe.Name .. ")")
 
     local cutEvent = plank:FindFirstChild("CutEvent")
     if not cutEvent then
-        log("!! No CutEvent child on this model.")
+        log("!! No CutEvent child.")
         busy = false
         return
     end
     log("CutEvent class: " .. cutEvent.ClassName)
 
+    -- watch workspace
     local beforeChildren = {}
     for _, c in ipairs(workspace:GetChildren()) do
         beforeChildren[c] = true
     end
-
     local watching = true
     task.spawn(function()
         local t0 = tick()
@@ -284,7 +287,7 @@ local function runCutTest(plank)
         tool = axe,
         cuttingClass = "Axe",
     }
-    log("Firing with height=1, faceVector=(1,0,0)...")
+    log("Firing with height=1 ...")
 
     local ok, err = pcall(function()
         RemoteProxy:FireServer(cutEvent, payload)
@@ -311,24 +314,31 @@ local function runCutTest(plank)
 end
 
 -- ============================================================
---  BUTTON WIRING
+--  BUTTONS (use .Activated — fires once for mouse OR touch)
 -- ============================================================
 local function runListPlanks()
-    -- Clear picker
     for _, c in ipairs(picker:GetChildren()) do
         if c:IsA("TextButton") then c:Destroy() end
     end
 
+    -- Refresh axe info too
+    local axe, realName = findAxe()
+    if axe then axeInfo.Text = "axe: " .. tostring(realName)
+    else axeInfo.Text = "axe: NONE" end
+
     local planks = findAllPlanks()
     log(("Found %d plank(s) you own."):format(#planks))
+    if #planks == 0 then picker.Visible = false return end
 
-    if #planks == 0 then
-        log("No planks with a CutEvent found. Make sure you own one.")
-        picker.Visible = false
-        return
-    end
+    -- Sort smallest first (so the small ones are easier to test)
+    table.sort(planks, function(a, b)
+        local _, sa = a:GetBoundingBox()
+        local _, sb = b:GetBoundingBox()
+        return sa.Magnitude < sb.Magnitude
+    end)
 
     for i, p in ipairs(planks) do
+        local ok, _, size = pcall(function() return p:GetBoundingBox() end)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -6, 0, 30)
         btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
@@ -337,46 +347,26 @@ local function runListPlanks()
         btn.TextSize = 12
         btn.Font = Enum.Font.Code
         btn.TextXAlignment = Enum.TextXAlignment.Left
-        local ok, _, size = pcall(function() return p:GetBoundingBox() end)
-        local sizeStr = ok and fmtVec(size) or "?"
-        btn.Text = ("  #%d %s  size=%s"):format(i, p.Name, sizeStr)
+        btn.Text = ("  #%d  size=%s"):format(i, ok and fmtVec(size) or "?")
         btn.Parent = picker
-        btn.MouseButton1Click:Connect(function()
+        btn.Activated:Connect(function()
             picker.Visible = false
-            log("Picked plank #" .. i .. " (" .. p.Name .. ")")
-            runCutTest(p)
-        end)
-        btn.TouchTap:Connect(function()
-            picker.Visible = false
-            log("Picked plank #" .. i .. " (" .. p.Name .. ")")
+            log("Picked plank #" .. i)
             runCutTest(p)
         end)
     end
-
     picker.Visible = true
 end
 
-local function doCopy()
-    if not setClipboard then
-        log("!! No clipboard function available.")
-        return
-    end
-    local ok, err = pcall(function() setClipboard(table.concat(logBuffer, "\n")) end)
-    if ok then log(">> Copied " .. #logBuffer .. " lines to clipboard.")
-    else log("!! Copy failed: " .. tostring(err)) end
-end
+listBtn.Activated:Connect(runListPlanks)
 
-listBtn.MouseButton1Click:Connect(runListPlanks)
-listBtn.TouchTap:Connect(runListPlanks)
-copyBtn.MouseButton1Click:Connect(doCopy)
-copyBtn.TouchTap:Connect(doCopy)
-clearBtn.MouseButton1Click:Connect(function()
-    logBuffer = {}
-    for _, c in ipairs(logBox:GetChildren()) do
-        if c:IsA("TextLabel") then c:Destroy() end
-    end
+copyBtn.Activated:Connect(function()
+    if not setClipboard then log("!! no clipboard") return end
+    local ok, err = pcall(function() setClipboard(table.concat(logBuffer, "\n")) end)
+    if ok then log(">> Copied " .. #logBuffer .. " lines.") else log("!! " .. tostring(err)) end
 end)
-clearBtn.TouchTap:Connect(function()
+
+clearBtn.Activated:Connect(function()
     logBuffer = {}
     for _, c in ipairs(logBox:GetChildren()) do
         if c:IsA("TextLabel") then c:Destroy() end
@@ -387,17 +377,17 @@ end)
 --  STARTUP
 -- ============================================================
 do
-    local tools = findAllTools()
-    local axe = findAxe()
+    local axe, realName = findAxe()
     if axe then
-        axeInfo.Text = "axe: " .. axe.Name
-    elseif #tools == 0 then
-        axeInfo.Text = "axe: NONE (equip one!)"
+        axeInfo.Text = "axe: " .. tostring(realName)
+        log("Axe found: " .. tostring(realName) .. " (obj=" .. axe.Name .. ")")
     else
-        axeInfo.Text = "axe: " .. #tools .. " tools, none match"
+        local all = gatherTools()
+        axeInfo.Text = "axe: NONE (" .. #all .. " tools)"
+        log(("No axe detected. %d tool(s) visible in Backpack/Character."):format(#all))
+        for _, t in ipairs(all) do
+            log(("  - obj=%s  ToolName=%s"):format(t.Name, tostring(toolRealName(t))))
+        end
     end
-    log("Ready.")
-    log("1) Equip or hold an axe so it's in your Backpack.")
-    log("2) Tap 'List My Planks'.")
-    log("3) Pick a plank from the list.")
+    log("Tap 'List My Planks' to start.")
 end
