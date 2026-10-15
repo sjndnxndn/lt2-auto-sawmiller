@@ -1,6 +1,6 @@
 -- ============================================================
--- LT2 PLANK MOVER & AUTO-CUTTER
--- Built on v7's proven cut method
+-- LT2 PLANK MOVER & AUTO-CUTTER - v2
+-- Fixed: manual resize handles, reversible water stash
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -17,9 +17,8 @@ local ClientIsDragging = Interaction:FindFirstChild("ClientIsDragging")
 -- CONFIG
 -- ============================================================
 local CONFIG = {
-    -- Cutting
     CUT_DELAY     = 1.0,
-    CUT_HEIGHT    = 1,                    -- 1 stud from the end
+    CUT_HEIGHT    = 1,
     FACE_VECTOR   = Vector3.new(1, 0, 0),
     COOLDOWN      = 0.23737628459930421,
     SECTION_ID    = 1,
@@ -28,13 +27,10 @@ local CONFIG = {
     MAX_CUTS      = 80,
     MIN_HP        = 30,
 
-    -- Teleport
-    TP_SIDE        = 3,
-    TP_UP          = 2,
-    TP_SETTLE      = 0.25,
-    TP_GROUND_GAP  = 8,                   -- if ground within this below plank base, stand
+    TP_SIDE       = 3,
+    TP_SETTLE     = 0.25,
+    TP_GROUND_GAP = 8,
 
-    -- Sawmill max log width (studs)
     SAWMILL_LIMITS = {
         shabby    = 1.4,
         fair      = 1.6,
@@ -43,10 +39,12 @@ local CONFIG = {
         sawmax02l = 2.6,
     },
 
-    -- Auto
     AUTO_INTERVAL = 2.0,
-    MAX_QUEUE     = 2,                    -- max pieces exiting a sawmill before we stop feeding
+    MAX_QUEUE     = 2,
     GODMODE       = true,
+
+    MIN_FRAME_W = 340,
+    MIN_FRAME_H = 320,
 }
 
 -- ============================================================
@@ -62,6 +60,7 @@ local state = {
     busy            = false,
     autoRunning     = false,
     processed       = setmetatable({}, {__mode = "k"}),
+    waterStash      = {},   -- { {part=part, parent=originalParent}, ... }
 }
 
 -- ============================================================
@@ -88,14 +87,17 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 -- ============================================================
--- WATER REMOVAL
+-- REVERSIBLE WATER STASH
 -- ============================================================
-local function nukeWater()
-    local n = 0
+local function stashWater()
+    if #state.waterStash > 0 then return 0 end  -- already stashed
     local terms = {"water","swamp","ocean","river","lake","sea","damagezone","hazard"}
     local snap = {}
-    for _, d in ipairs(workspace:GetDescendants()) do table.insert(snap, d) end
-    for _, d in ipairs(snap) do
+    for _, d in ipairs(workspace:GetDescendants()) do
+        snap[d] = true
+    end
+    local n = 0
+    for d in pairs(snap) do
         if d and d.Parent then
             local ok = d:IsA("BasePart") or d:IsA("Folder")
                     or d:IsA("Model") or d:IsA("TrussPart")
@@ -103,7 +105,8 @@ local function nukeWater()
                 local nm = d.Name:lower()
                 for _, t in ipairs(terms) do
                     if nm:find(t) then
-                        pcall(function() d:Destroy() end)
+                        table.insert(state.waterStash, {part = d, parent = d.Parent})
+                        d.Parent = nil
                         n = n + 1
                         break
                     end
@@ -113,13 +116,21 @@ local function nukeWater()
     end
     return n
 end
-task.spawn(function()
-    local n = nukeWater()
-    print("[LT2] Water removed:", n)
-end)
+
+local function restoreWater()
+    local n = 0
+    for _, entry in ipairs(state.waterStash) do
+        if entry.part and entry.parent then
+            pcall(function() entry.part.Parent = entry.parent end)
+            n = n + 1
+        end
+    end
+    state.waterStash = {}
+    return n
+end
 
 -- ============================================================
--- GUI — resizable + close/open toggle
+-- GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
 sg.Name = "LT2_PlankMover"
@@ -133,15 +144,14 @@ mainFrame.Position = UDim2.new(0.5, -230, 0.5, -240)
 mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Resizable = true              -- <-- resizable
 mainFrame.Parent = sg
+-- NOTE: Resizable is not a valid Frame property. Handled via handles below.
 
--- Title bar
 local titleBar = Instance.new("Frame")
 titleBar.Size = UDim2.new(1, 0, 0, 32)
 titleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 titleBar.BorderSizePixel = 0
+titleBar.Active = true
 titleBar.Parent = mainFrame
 
 local titleLbl = Instance.new("TextLabel")
@@ -155,7 +165,6 @@ titleLbl.Font = Enum.Font.SourceSansBold
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.Parent = titleBar
 
--- Close/Open toggle
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Size = UDim2.new(0, 28, 0, 28)
 toggleBtn.Position = UDim2.new(1, -32, 0, 2)
@@ -167,7 +176,6 @@ toggleBtn.TextSize = 16
 toggleBtn.Font = Enum.Font.SourceSansBold
 toggleBtn.Parent = titleBar
 
--- Reopen button (shown when closed)
 local reopenBtn = Instance.new("TextButton")
 reopenBtn.Size = UDim2.new(0, 44, 0, 44)
 reopenBtn.Position = UDim2.new(0, 20, 0.5, -22)
@@ -180,14 +188,12 @@ reopenBtn.Font = Enum.Font.SourceSansBold
 reopenBtn.Visible = false
 reopenBtn.Parent = sg
 
--- Content area
 local content = Instance.new("Frame")
 content.Size = UDim2.new(1, -10, 1, -40)
 content.Position = UDim2.new(0, 5, 0, 36)
 content.BackgroundTransparency = 1
 content.Parent = mainFrame
 
--- Status
 local statusLbl = Instance.new("TextLabel")
 statusLbl.Size = UDim2.new(1, 0, 0, 34)
 statusLbl.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
@@ -198,7 +204,6 @@ statusLbl.TextSize = 12
 statusLbl.Font = Enum.Font.SourceSans
 statusLbl.Parent = content
 
--- Button maker
 local function mkBtn(text, x, y, w, h, color, parent)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0, w, 0, h)
@@ -214,15 +219,11 @@ local function mkBtn(text, x, y, w, h, color, parent)
     return b
 end
 
--- Row: Select Sawmill / Select Plank
 local selSawBtn = mkBtn("1. Select Sawmill", 0, 40, 165, 34, Color3.fromRGB(60, 120, 200))
 local selPlkBtn = mkBtn("2. Select Plank",   172, 40, 165, 34, Color3.fromRGB(60, 180, 100))
+local moveBtn   = mkBtn("3. Move Plank",     0,   78, 165, 34, Color3.fromRGB(200, 150, 50))
+local cutBtn    = mkBtn("Cut Plank 1x1",     172, 78, 165, 34, Color3.fromRGB(180, 80, 180))
 
--- Row: Move / Cut
-local moveBtn = mkBtn("3. Move Plank",  0,   78, 165, 34, Color3.fromRGB(200, 150, 50))
-local cutBtn  = mkBtn("Cut Plank 1x1",  172, 78, 165, 34, Color3.fromRGB(180, 80, 180))
-
--- Divider
 local div = Instance.new("Frame")
 div.Size = UDim2.new(1, 0, 0, 1)
 div.Position = UDim2.new(0, 0, 0, 118)
@@ -230,17 +231,14 @@ div.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
 div.BorderSizePixel = 0
 div.Parent = content
 
--- Auto buttons
 local autoMoveBtn = mkBtn("Auto Move: OFF", 0,   126, 250, 32, Color3.fromRGB(90, 90, 90))
 local autoCutBtn  = mkBtn("Auto Cut: OFF",  256, 126, 165, 32, Color3.fromRGB(90, 90, 90))
 
--- Utility row
-local godBtn    = mkBtn("God: ON",   0,   164, 100, 28, Color3.fromRGB(60, 140, 100))
-local listBtn   = mkBtn("List",      106, 164, 90,  28, Color3.fromRGB(60, 120, 200))
-local copyBtn   = mkBtn("Copy Log",  200, 164, 100, 28, Color3.fromRGB(60, 180, 100))
-local clearBtn  = mkBtn("Clear",     304, 164, 80,  28, Color3.fromRGB(150, 80, 80))
+local godBtn   = mkBtn("God: ON",   0,   164, 100, 28, Color3.fromRGB(60, 140, 100))
+local listBtn  = mkBtn("List",      106, 164, 90,  28, Color3.fromRGB(60, 120, 200))
+local copyBtn  = mkBtn("Copy Log",  200, 164, 100, 28, Color3.fromRGB(60, 180, 100))
+local clearBtn = mkBtn("Clear",     304, 164, 80,  28, Color3.fromRGB(150, 80, 80))
 
--- Log
 local logBox = Instance.new("ScrollingFrame")
 logBox.Size = UDim2.new(1, 0, 1, -210)
 logBox.Position = UDim2.new(0, 0, 0, 200)
@@ -256,7 +254,6 @@ logLayout.Padding = UDim.new(0, 2)
 logLayout.SortOrder = Enum.SortOrder.LayoutOrder
 logLayout.Parent = logBox
 
--- Picker overlay
 local picker = Instance.new("ScrollingFrame")
 picker.Size = UDim2.new(1, -10, 0, 180)
 picker.Position = UDim2.new(0, 5, 1, -190)
@@ -273,6 +270,104 @@ pickerLayout.Padding = UDim.new(0, 2)
 pickerLayout.SortOrder = Enum.SortOrder.LayoutOrder
 pickerLayout.Parent = picker
 
+-- ============================================================
+-- RESIZE HANDLES (manual resize since Frame.Resizable doesn't exist)
+-- ============================================================
+local function makeHandle(name, anchorX, anchorY, size)
+    local h = Instance.new("TextButton")
+    h.Name = name
+    h.Size = UDim2.new(0, size, 0, size)
+    h.AnchorPoint = Vector2.new(anchorX, anchorY)
+    h.Position = UDim2.new(anchorX, 0, anchorY, 0)
+    h.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    h.BackgroundTransparency = 0.3
+    h.BorderSizePixel = 0
+    h.Text = ""
+    h.AutoButtonColor = false
+    h.ZIndex = 5
+    h.Parent = mainFrame
+    return h
+end
+
+local handleSize = 12
+local hBR = makeHandle("RB", 1, 1, handleSize)   -- bottom-right (main resize corner)
+local hTR = makeHandle("RT", 1, 0, handleSize)
+local hBL = makeHandle("LB", 0, 1, handleSize)
+local hTL = makeHandle("LT", 0, 0, handleSize)
+
+local resizing = false
+local resizeStartMouse
+local resizeStartSize
+local resizeCorner
+
+local function beginResize(corner, input)
+    resizing = true
+    resizeCorner = corner
+    resizeStartMouse = Vector2.new(input.Position.X, input.Position.Y)
+    resizeStartSize = mainFrame.AbsoluteSize
+end
+
+local function updateResize(input)
+    if not resizing then return end
+    local mx = input.Position.X - resizeStartMouse.X
+    local my = input.Position.Y - resizeStartMouse.Y
+
+    local w = resizeStartSize.X
+    local h = resizeStartSize.Y
+
+    if resizeCorner == "RB" then
+        w = w + mx; h = h + my
+    elseif resizeCorner == "RT" then
+        w = w + mx; h = h - my
+    elseif resizeCorner == "LB" then
+        w = w - mx; h = h + my
+    elseif resizeCorner == "LT" then
+        w = w - mx; h = h - my
+    end
+
+    w = math.max(CONFIG.MIN_FRAME_W, w)
+    h = math.max(CONFIG.MIN_FRAME_H, h)
+
+    mainFrame.Size = UDim2.new(0, w, 0, h)
+end
+
+local function endResize()
+    resizing = false
+    resizeCorner = nil
+end
+
+local function wireHandle(h, corner)
+    h.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            beginResize(corner, input)
+        end
+    end)
+end
+wireHandle(hBR, "RB")
+wireHandle(hTR, "RT")
+wireHandle(hBL, "LB")
+wireHandle(hTL, "LT")
+
+UserInputService.InputChanged:Connect(function(input)
+    if resizing then
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+           or input.UserInputType == Enum.UserInputType.Touch then
+            updateResize(input)
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+       or input.UserInputType == Enum.UserInputType.Touch then
+        endResize()
+    end
+end)
+
+-- ============================================================
+-- LOG
+-- ============================================================
 local logBuffer = {}
 local function log(msg)
     table.insert(logBuffer, msg)
@@ -416,7 +511,7 @@ local function getWoodType(plank)
 end
 
 -- ============================================================
--- SMART TELEPORT (ground-aware)
+-- TELEPORT
 -- ============================================================
 local function teleportNear(plank)
     local c = LocalPlayer.Character
@@ -426,7 +521,6 @@ local function teleportNear(plank)
     local ws = getWoodSection(plank)
     if not ws then return "fail" end
 
-    -- Pick a free side (+X, -X, +Z, -Z)
     local sides = {
         Vector3.new(CONFIG.TP_SIDE, 0, 0),
         Vector3.new(-CONFIG.TP_SIDE, 0, 0),
@@ -446,14 +540,12 @@ local function teleportNear(plank)
     local tz = ws.Position.Z + side.Z
     local plankBottom = ws.Position.Y - (ws.Size.Y / 2)
 
-    -- Find ground under target spot
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {c, plank, sg}
     local hit = workspace:Raycast(
         Vector3.new(tx, plankBottom + 2, tz),
-        Vector3.new(0, -500, 0),
-        params)
+        Vector3.new(0, -500, 0), params)
 
     local goalY, mode
     if hit and (plankBottom - hit.Position.Y) <= CONFIG.TP_GROUND_GAP then
@@ -472,7 +564,7 @@ local function teleportNear(plank)
 end
 
 -- ============================================================
--- CUT (v7's proven method: equip → teleport → fire RemoteProxy)
+-- CUT
 -- ============================================================
 local function fireCut(plank, axe, height)
     local cutEvent = plank:FindFirstChild("CutEvent")
@@ -489,70 +581,80 @@ local function fireCut(plank, axe, height)
     return pcall(function() RemoteProxy:FireServer(cutEvent, payload) end)
 end
 
---- Cut a plank down to 1x1 by firing one cut per second (v7-style).
+--- Cut a plank to 1x1. Stashes water during cutting, restores it after.
 local function cutTo1x1(plank, announceFn)
     if not plank or not plank.Parent then return false end
 
-    -- Equip axe FIRST (v7 behaviour: tool must be in Character)
-    local axe = findAxe()
-    if not axe then
-        if announceFn then announceFn("No axe found.") end
-        return false
-    end
-    ensureEquipped(axe)
-
-    -- Teleport near
-    local mode = teleportNear(plank)
-    if announceFn then announceFn("Teleport: " .. mode) end
-
-    -- Re-fetch axe (equip + teleport can move it)
-    axe = findAxe()
-    if not axe then
-        if announceFn then announceFn("Axe lost after teleport.") end
-        return false
+    -- Stash water while cutting (restore after)
+    local stashed = stashWater()
+    if stashed > 0 and announceFn then
+        announceFn("Water stashed (" .. stashed .. ").")
     end
 
-    local cuts = 0
-    while cuts < CONFIG.MAX_CUTS do
-        if not plank.Parent then
-            if announceFn then announceFn("Plank destroyed.") end
-            return true
-        end
-        if getHP() < CONFIG.MIN_HP then
-            if announceFn then announceFn("HP low, abort.") end
+    local ok = (function()
+        local axe = findAxe()
+        if not axe then
+            if announceFn then announceFn("No axe found.") end
             return false
-        end
-
-        local size = getSize(plank)
-        if not size then break end
-        -- Sort dims; smallest two should be ~1
-        local d = {size.X, size.Y, size.Z}
-        table.sort(d)
-        if d[1] <= 1.05 and d[2] <= 1.05 then
-            if announceFn then announceFn("Plank is 1x1 now (" .. cuts .. " cuts).") end
-            return true
-        end
-
-        -- Ensure axe is still equipped
-        if not axe or not axe.Parent then
-            axe = findAxe()
-            if not axe then break end
         end
         ensureEquipped(axe)
 
-        fireCut(plank, axe, CONFIG.CUT_HEIGHT)
-        cuts = cuts + 1
-        if announceFn and cuts % 5 == 0 then
-            announceFn("Cut " .. cuts .. " applied.")
+        local mode = teleportNear(plank)
+        if announceFn then announceFn("Teleport: " .. mode) end
+
+        axe = findAxe()
+        if not axe then
+            if announceFn then announceFn("Axe lost after teleport.") end
+            return false
         end
-        task.wait(CONFIG.CUT_DELAY)
+
+        local cuts = 0
+        while cuts < CONFIG.MAX_CUTS do
+            if not plank.Parent then
+                if announceFn then announceFn("Plank destroyed.") end
+                return true
+            end
+            if getHP() < CONFIG.MIN_HP then
+                if announceFn then announceFn("HP low, abort.") end
+                return false
+            end
+
+            local size = getSize(plank)
+            if not size then break end
+            local d = {size.X, size.Y, size.Z}
+            table.sort(d)
+            if d[1] <= 1.05 and d[2] <= 1.05 then
+                if announceFn then announceFn("Plank is 1x1 now (" .. cuts .. " cuts).") end
+                return true
+            end
+
+            if not axe or not axe.Parent then
+                axe = findAxe()
+                if not axe then break end
+            end
+            ensureEquipped(axe)
+
+            fireCut(plank, axe, CONFIG.CUT_HEIGHT)
+            cuts = cuts + 1
+            if announceFn and cuts % 5 == 0 then
+                announceFn("Cut " .. cuts .. " applied.")
+            end
+            task.wait(CONFIG.CUT_DELAY)
+        end
+        if announceFn then announceFn("Stopped after " .. cuts .. " cuts.") end
+        return false
+    end)()
+
+    -- Always restore water after cutting is done
+    if #state.waterStash > 0 then
+        local n = restoreWater()
+        if announceFn then announceFn("Water restored (" .. n .. ").") end
     end
-    if announceFn then announceFn("Stopped after " .. cuts .. " cuts.") end
-    return false
+    return ok
 end
 
 -- ============================================================
--- MOVE PLANK TO SAWMILL (teleport & release)
+-- MOVE PLANK
 -- ============================================================
 local function grabOwnership(plank)
     if not ClientIsDragging then return false end
@@ -577,13 +679,10 @@ end
 
 local function movePlankToSawmill(plank, sawmill)
     if not plank or not sawmill then return false end
-
-    -- Position player near the plank
     teleportNear(plank)
     grabOwnership(plank)
     task.wait(0.1)
 
-    -- Target: sawmill's Loading part, or its pivot + up
     local target
     local loadPart = sawmill:FindFirstChild("LoadingHole")
                   or sawmill:FindFirstChild("Loading")
@@ -620,7 +719,6 @@ local function plankFitsSawmill(plank, sawmill)
     return dims[1] <= getSawmillMaxSize(sawmill)
 end
 
---- Count planks currently sitting at the sawmill's output (within 15 studs).
 local function sawmillQueueFull(sawmill)
     if not sawmill then return false end
     local pos = sawmill:GetPivot().Position
@@ -635,7 +733,7 @@ local function sawmillQueueFull(sawmill)
 end
 
 -- ============================================================
--- AUTO MODE LOOP
+-- AUTO MODE
 -- ============================================================
 local function startAutoLoop()
     if state.autoRunning then return end
@@ -649,12 +747,11 @@ local function startAutoLoop()
                 continue
             end
             if sawmillQueueFull(sawmill) then
-                setStatus("Auto: sawmill queue full (" .. CONFIG.MAX_QUEUE .. ")")
+                setStatus("Auto: queue full")
                 task.wait(CONFIG.AUTO_INTERVAL)
                 continue
             end
 
-            -- Find a suitable plank
             local target
             for _, p in ipairs(findAllPlanks()) do
                 if not state.processed[p] and plankFitsSawmill(p, sawmill) then
@@ -673,7 +770,7 @@ local function startAutoLoop()
             if movePlankToSawmill(target, sawmill) then
                 state.processed[target] = true
                 if state.autoCut then
-                    log("Auto: cutting to 1x1")
+                    log("Auto: cutting " .. getWoodType(target))
                     cutTo1x1(target, function(m) log("  " .. m) end)
                 end
             end
@@ -750,7 +847,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
         if m and isSawmill(m) then
             state.selectedSawmill = m
             state.waitingSawmill = false
-            setStatus("Sawmill selected: " .. m.Name)
+            setStatus("Sawmill: " .. m.Name)
             log("Sawmill: " .. m.Name)
         else
             local near = findNearSawmill(hitPos, 15)
@@ -760,7 +857,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
                 setStatus("Sawmill (nearby): " .. near.Name)
                 log("Sawmill (nearby): " .. near.Name)
             else
-                log("Not a sawmill. Tap your sawmill's conveyor.")
+                log("Not a sawmill. Tap your sawmill.")
             end
         end
         return
@@ -789,7 +886,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 
 -- ============================================================
--- BUTTON WIRING
+-- BUTTONS
 -- ============================================================
 toggleBtn.Activated:Connect(function()
     mainFrame.Visible = false
@@ -818,11 +915,9 @@ moveBtn.Activated:Connect(function()
     if state.busy then return end
     if not state.selectedSawmill then log("No sawmill selected."); return end
     if not state.selectedPlank then log("No plank selected."); return end
-    if not state.selectedPlank.Parent then
-        log("Selected plank no longer exists."); return end
+    if not state.selectedPlank.Parent then log("Plank gone."); return end
     if not plankFitsSawmill(state.selectedPlank, state.selectedSawmill) then
-        log("Plank too wide for this sawmill.")
-        return
+        log("Plank too wide for this sawmill."); return
     end
     state.busy = true
     setStatus("Moving plank...")
@@ -918,11 +1013,12 @@ listBtn.Activated:Connect(function()
 end)
 
 copyBtn.Activated:Connect(function()
+    local text = table.concat(logBuffer, "\n")
     if type(setclipboard) == "function" then
-        pcall(function() setclipboard(table.concat(logBuffer, "\n")) end)
+        pcall(function() setclipboard(text) end)
         log(">> Copied.")
     elseif type(toclipboard) == "function" then
-        pcall(function() toclipboard(table.concat(logBuffer, "\n")) end)
+        pcall(function() toclipboard(text) end)
         log(">> Copied.")
     else
         log("!! No clipboard function.")
@@ -940,6 +1036,6 @@ end)
 -- STARTUP
 -- ============================================================
 log("Script loaded.")
+log("Resize: drag the gray corners of the window.")
+log("Water is stashed during cuts and restored after.")
 log("1) Select sawmill, 2) select plank, 3) move or cut.")
-log("Auto Move + Auto Cut run continuously.")
-log("God mode keeps you alive during cuts.")
