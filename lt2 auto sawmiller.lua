@@ -1,5 +1,5 @@
--- LT2 Cut Diagnostic v8
--- Tap-to-pick OR list-pick, robust axe finding, auto-height option.
+-- LT2 Cut Diagnostic v9
+-- Tap fallback (finds planks near tap), TreeClass shown in picker.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,6 +19,7 @@ local CONFIG = {
     HIT_POINTS     = 1.2,
     CUTTING_CLASS  = "Axe",
     MIN_HP         = 30,
+    TAP_SEARCH_RADIUS = 6,   -- studs around the tap hit point to look for planks
 }
 
 local setClipboard = nil
@@ -31,13 +32,13 @@ end
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag8"
+sg.Name = "LT2_CutDiag9"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 560, 0, 500)
-frame.Position = UDim2.new(0.5, -280, 0.5, -250)
+frame.Size = UDim2.new(0, 580, 0, 500)
+frame.Position = UDim2.new(0.5, -290, 0.5, -250)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -48,7 +49,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v8 - tap a plank in world"
+title.Text = "LT2 Cut Diagnostic v9"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -75,10 +76,11 @@ local clearBtn = mkBtn("Clear",      120, 32, 55, 30, Color3.fromRGB(150, 80, 80
 local equipBtn = mkBtn("Equip",      178, 32, 55, 30, Color3.fromRGB(200, 140, 50))
 local stopBtn  = mkBtn("STOP",       236, 32, 55, 30, Color3.fromRGB(200, 50, 50))
 local scanBtn  = mkBtn("Scan Axe",   294, 32, 90, 30, Color3.fromRGB(120, 120, 200))
+local pickBtn  = mkBtn("Tap Pick: ON", 388, 32, 100, 30, Color3.fromRGB(60, 140, 100))
 
 local axeInfo = Instance.new("TextLabel")
-axeInfo.Size = UDim2.new(1, -390, 0, 30)
-axeInfo.Position = UDim2.new(0, 390, 0, 32)
+axeInfo.Size = UDim2.new(1, -490, 0, 30)
+axeInfo.Position = UDim2.new(0, 490, 0, 32)
 axeInfo.BackgroundTransparency = 1
 axeInfo.Text = "axe: ?"
 axeInfo.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -91,7 +93,7 @@ local lbl2 = Instance.new("TextLabel")
 lbl2.Size = UDim2.new(1, -8, 0, 18)
 lbl2.Position = UDim2.new(0, 4, 0, 66)
 lbl2.BackgroundTransparency = 1
-lbl2.Text = "Tap a plank in the world, OR use a button below:"
+lbl2.Text = "Tap a plank in the world OR use quick buttons:"
 lbl2.TextColor3 = Color3.fromRGB(200, 200, 200)
 lbl2.TextSize = 11
 lbl2.Font = Enum.Font.SourceSansBold
@@ -192,17 +194,15 @@ local function toolRealName(tool)
     return tool.Name
 end
 
---- VERY thorough axe search. Checks Backpack, Tools folder, Character,
---- and even descendants of Player in case an executor moved it.
 local function findAxe()
     local seen = {}
-    local searchOrder = {
+    local order = {
         LocalPlayer:FindFirstChild("Backpack"),
         LocalPlayer:FindFirstChild("Tools"),
         LocalPlayer.Character,
         LocalPlayer,
     }
-    for _, container in ipairs(searchOrder) do
+    for _, container in ipairs(order) do
         if container then
             for _, d in ipairs(container:GetDescendants()) do
                 if d:IsA("Tool") and not seen[d] then
@@ -220,16 +220,15 @@ local function findAxe()
     return nil
 end
 
---- Debug: list every tool found anywhere.
 local function debugListTools()
     local seen = {}
-    local searchOrder = {
+    local order = {
         ["Backpack"] = LocalPlayer:FindFirstChild("Backpack"),
         ["Tools"] = LocalPlayer:FindFirstChild("Tools"),
         ["Character"] = LocalPlayer.Character,
         ["Player"] = LocalPlayer,
     }
-    for label, container in pairs(searchOrder) do
+    for label, container in pairs(order) do
         if container then
             for _, d in ipairs(container:GetDescendants()) do
                 if d:IsA("Tool") and not seen[d] then
@@ -247,6 +246,16 @@ local function isPlank(model)
     if not ownerMatches(model, LocalPlayer) then return false end
     if not model:FindFirstChild("CutEvent") then return false end
     return true
+end
+
+--- Get the wood type (TreeClass) of a plank.
+local function getWoodType(plank)
+    local tc = plank:FindFirstChild("TreeClass")
+    if tc and tc:IsA("StringValue") then
+        local ok, v = pcall(function() return tc.Value end)
+        if ok and v then return v end
+    end
+    return "?"
 end
 
 local function findAllPlanks()
@@ -322,27 +331,19 @@ local function fireBurst(plank, height, cuts, delay)
         log("!! No CutEvent.")
         return 0
     end
-
     local fired = 0
     for i = 1, cuts do
         if not plank.Parent then
-            log("  plank gone at " .. i)
-            break
+            log("  plank gone at " .. i); break
         end
         if getHP() < CONFIG.MIN_HP then
-            log("  HP low (" .. math.floor(getHP()) .. "), abort")
-            break
+            log("  HP low, abort"); break
         end
-
-        -- Refresh axe every cut
         local axe = findAxe()
         if not axe then
-            log("  no axe at cut " .. i)
-            break
+            log("  no axe at cut " .. i); break
         end
         ensureEquipped(axe)
-
-        -- Use the tool object we found (may be in Character now)
         local payload = {
             height = height,
             faceVector = CONFIG.FACE_VECTOR,
@@ -352,17 +353,15 @@ local function fireBurst(plank, height, cuts, delay)
             tool = axe,
             cuttingClass = CONFIG.CUTTING_CLASS,
         }
-
         local ok = pcall(function()
             RemoteProxy:FireServer(cutEvent, payload)
         end)
         if ok then
             fired = fired + 1
-            log(("  cut %d/%d  axe=%s"):format(i, cuts, toolRealName(axe)))
+            log(("  cut %d/%d"):format(i, cuts))
         else
             log(("  cut %d/%d FAILED"):format(i, cuts))
         end
-
         task.wait(delay)
     end
     return fired
@@ -376,7 +375,6 @@ local busy = false
 local function autoHeightFor(plank)
     local s = getSize(plank)
     if not s then return 1 end
-    -- Use half the longest axis, minus a bit, clamped to [0.5, 2.5]
     local maxDim = math.max(s.X, s.Y, s.Z)
     local h = maxDim / 2 - 0.5
     if h < 0.5 then h = 0.5 end
@@ -389,7 +387,7 @@ local function testOne(plank, heightMode, cuts, delay)
     busy = true
 
     log("========== TEST ==========")
-    log("Plank: " .. plank.Name)
+    log("Plank: " .. plank.Name .. "  wood=" .. getWoodType(plank))
 
     local sizeBefore = getSize(plank)
     log("BEFORE size=" .. (sizeBefore and fmtVec(sizeBefore) or "?"))
@@ -406,14 +404,12 @@ local function testOne(plank, heightMode, cuts, delay)
     ensureEquipped(axe)
     teleportToPlank(plank)
 
-    -- Resolve height
     local h
     if heightMode == "auto" then
         h = autoHeightFor(plank)
         log(("auto height = %.2f"):format(h))
     elseif heightMode == "half" then
-        local s = sizeBefore
-        h = s and math.max(s.X, s.Y, s.Z) / 2 or 1
+        h = sizeBefore and math.max(sizeBefore.X, sizeBefore.Y, sizeBefore.Z) / 2 or 1
         log(("half height = %.2f"):format(h))
     else
         h = heightMode or 1
@@ -441,7 +437,6 @@ local function testOne(plank, heightMode, cuts, delay)
     else
         log("Plank DESTROYED - cut worked!")
     end
-
     log("========== DONE ==========")
     busy = false
 end
@@ -464,7 +459,6 @@ local function runListPlanks()
     log(("Found %d plank(s)."):format(#planks))
     if #planks == 0 then picker.Visible = false return end
 
-    -- Show bigger planks first
     table.sort(planks, function(a, b)
         local sa, sb = getSize(a), getSize(b)
         return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
@@ -472,6 +466,7 @@ local function runListPlanks()
 
     for i, p in ipairs(planks) do
         local s = getSize(p)
+        local wood = getWoodType(p)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -6, 0, 30)
         btn.BorderSizePixel = 0
@@ -480,11 +475,12 @@ local function runListPlanks()
         btn.Font = Enum.Font.Code
         btn.TextXAlignment = Enum.TextXAlignment.Left
         btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        btn.Text = ("  #%d  size=%s"):format(i, s and fmtVec(s) or "?")
+        btn.Text = ("  #%d  [%s]  %s"):format(
+            i, wood, s and fmtVec(s) or "?")
         btn.Parent = picker
         btn.Activated:Connect(function()
             picker.Visible = false
-            log("Picked #" .. i)
+            log("Picked #" .. i .. " (" .. wood .. ")")
             testOne(p, 1)
         end)
     end
@@ -529,45 +525,20 @@ stopBtn.Activated:Connect(function()
     log("Stopped.")
 end)
 
-v_h1.Activated:Connect(function()
+local function pickBiggest(mode, cuts, delay)
     local planks = findAllPlanks()
     if #planks == 0 then return end
-    table.sort(planks, function(a,b)
+    table.sort(planks, function(a, b)
         return (getSize(a) and getSize(a).Magnitude or 0) >
                (getSize(b) and getSize(b).Magnitude or 0)
     end)
-    testOne(planks[1], 1)
-end)
+    testOne(planks[1], mode, cuts, delay)
+end
 
-v_hAuto.Activated:Connect(function()
-    local planks = findAllPlanks()
-    if #planks == 0 then return end
-    table.sort(planks, function(a,b)
-        return (getSize(a) and getSize(a).Magnitude or 0) >
-               (getSize(b) and getSize(b).Magnitude or 0)
-    end)
-    testOne(planks[1], "auto")
-end)
-
-v_hHalf.Activated:Connect(function()
-    local planks = findAllPlanks()
-    if #planks == 0 then return end
-    table.sort(planks, function(a,b)
-        return (getSize(a) and getSize(a).Magnitude or 0) >
-               (getSize(b) and getSize(b).Magnitude or 0)
-    end)
-    testOne(planks[1], "half")
-end)
-
-v_test.Activated:Connect(function()
-    local planks = findAllPlanks()
-    if #planks == 0 then return end
-    table.sort(planks, function(a,b)
-        return (getSize(a) and getSize(a).Magnitude or 0) >
-               (getSize(b) and getSize(b).Magnitude or 0)
-    end)
-    testOne(planks[1], 1, 1, 0)
-end)
+v_h1.Activated:Connect(function() pickBiggest(1) end)
+v_hAuto.Activated:Connect(function() pickBiggest("auto") end)
+v_hHalf.Activated:Connect(function() pickBiggest("half") end)
+v_test.Activated:Connect(function() pickBiggest(1, 1, 0) end)
 
 p_10x1.Activated:Connect(function()
     CONFIG.CUTS_PER_BURST = 10; CONFIG.BURST_DELAY = 1.0
@@ -587,8 +558,20 @@ p_30x05.Activated:Connect(function()
 end)
 
 -- ============================================================
---  TAP IN WORLD TO PICK PLANK
+--  TAP-TO-PICK (with fallback to nearby planks)
 -- ============================================================
+local pickEnabled = true
+
+local function togglePickBtn()
+    pickEnabled = not pickEnabled
+    pickBtn.Text = "Tap Pick: " .. (pickEnabled and "ON" or "OFF")
+    pickBtn.BackgroundColor3 = pickEnabled
+        and Color3.fromRGB(60, 140, 100)
+        or Color3.fromRGB(120, 60, 60)
+end
+
+pickBtn.Activated:Connect(togglePickBtn)
+
 local function raycastFromScreen(pos)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
@@ -597,29 +580,75 @@ local function raycastFromScreen(pos)
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { sg, LocalPlayer.Character }
     local result = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
-    return result and result.Instance or nil
+    return result and result.Instance, result and result.Position or nil
+end
+
+--- Find a plank whose WoodSection contains the given world position
+--- OR is within radius. Used when raycast hits the plot instead of the plank.
+local function findPlankNear(worldPos, radius)
+    local planks = findAllPlanks()
+    local bestPlank, bestDist = nil, math.huge
+    for _, p in ipairs(planks) do
+        local ws = getWoodSection(p)
+        if ws then
+            -- Closest point on the WoodSection part to worldPos
+            local localPos = ws.CFrame:PointToObjectSpace(worldPos)
+            local half = ws.Size / 2
+            local clamped = Vector3.new(
+                math.clamp(localPos.X, -half.X, half.X),
+                math.clamp(localPos.Y, -half.Y, half.Y),
+                math.clamp(localPos.Z, -half.Z, half.Z)
+            )
+            local worldClosest = ws.CFrame:PointToWorldSpace(clamped)
+            local d = (worldClosest - worldPos).Magnitude
+            if d < bestDist then
+                bestDist = d
+                bestPlank = p
+            end
+        end
+    end
+    if bestPlank and bestDist <= radius then
+        return bestPlank, bestDist
+    end
+    return nil, bestDist
 end
 
 local function handleTap(screenPos, gameProcessed)
     if gameProcessed then return end
+    if not pickEnabled then return end
+
     -- Ignore taps inside our GUI
     local guiObjs = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(screenPos.X, screenPos.Y)
     for _, obj in ipairs(guiObjs) do
         if obj:IsDescendantOf(sg) then return end
     end
 
-    local hit = raycastFromScreen(screenPos)
-    if not hit then return end
-    local model = hit:FindFirstAncestorOfClass("Model")
-    if not model then return end
-
-    if not isPlank(model) then
-        log("Tapped " .. model.Name .. " - not a plank (no CutEvent or not yours).")
+    local hit, hitPos = raycastFromScreen(screenPos)
+    if not hit then
+        log("Tap: nothing hit.")
         return
     end
 
-    log("Tapped plank: " .. model.Name)
-    testOne(model, 1)
+    -- Case 1: direct hit on a plank model
+    local model = hit:FindFirstAncestorOfClass("Model")
+    if model and isPlank(model) then
+        log("Tapped plank directly: " .. model.Name
+            .. " [" .. getWoodType(model) .. "]")
+        testOne(model, 1)
+        return
+    end
+
+    -- Case 2: hit was not a plank (probably the plot). Look nearby.
+    log(("Tap hit %s - searching %.0f studs around hit point..."):format(
+        hit.Name, CONFIG.TAP_SEARCH_RADIUS))
+    local nearby, dist = findPlankNear(hitPos, CONFIG.TAP_SEARCH_RADIUS)
+    if nearby then
+        log(("Found plank nearby: %s [%s]  distance=%.2f"):format(
+            nearby.Name, getWoodType(nearby), dist))
+        testOne(nearby, 1)
+    else
+        log("No owned plank within radius.")
+    end
 end
 
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -633,6 +662,6 @@ end)
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v8 ready.")
-log("Tap a plank in the world to test it, OR use buttons.")
-log("If 'No axe' appears, tap 'Scan Axe' to see what's found.")
+log("v9 ready.")
+log("Tap a plank in the world. If ray hits the plot, we search nearby.")
+log("List button shows [wood type] next to size.")
