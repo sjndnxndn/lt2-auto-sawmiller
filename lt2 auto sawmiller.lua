@@ -1,5 +1,5 @@
--- LT2 Cut Diagnostic v4
--- Adds TestPing, tries multiple payloads, highlights big planks to test.
+-- LT2 Cut Diagnostic v5
+-- Teleports player next to plank before firing cut.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,13 +18,13 @@ local setClipboard =
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag4"
+sg.Name = "LT2_CutDiag5"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 560, 0, 460)
-frame.Position = UDim2.new(0.5, -280, 0.5, -230)
+frame.Size = UDim2.new(0, 560, 0, 480)
+frame.Position = UDim2.new(0.5, -280, 0.5, -240)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -35,7 +35,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v4"
+title.Text = "LT2 Cut Diagnostic v5 - teleport edition"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -73,26 +73,35 @@ axeInfo.Font = Enum.Font.Code
 axeInfo.TextXAlignment = Enum.TextXAlignment.Left
 axeInfo.Parent = frame
 
--- Payload variation row
-local payloadLabel = Instance.new("TextLabel")
-payloadLabel.Size = UDim2.new(1, -8, 0, 20)
-payloadLabel.Position = UDim2.new(0, 4, 0, 66)
-payloadLabel.BackgroundTransparency = 1
-payloadLabel.Text = "Test payload:"
-payloadLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-payloadLabel.TextSize = 11
-payloadLabel.Font = Enum.Font.SourceSansBold
-payloadLabel.TextXAlignment = Enum.TextXAlignment.Left
-payloadLabel.Parent = frame
+-- Row 2: Test variants
+local variantsLabel = Instance.new("TextLabel")
+variantsLabel.Size = UDim2.new(1, -8, 0, 18)
+variantsLabel.Position = UDim2.new(0, 4, 0, 66)
+variantsLabel.BackgroundTransparency = 1
+variantsLabel.Text = "Quick test (auto-picks largest plank, teleports, fires):"
+variantsLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+variantsLabel.TextSize = 11
+variantsLabel.Font = Enum.Font.SourceSansBold
+variantsLabel.TextXAlignment = Enum.TextXAlignment.Left
+variantsLabel.Parent = frame
 
-local h1Btn  = mkBtn("h=1",        4,   88, 80, 28, Color3.fromRGB(70, 90, 130))
-local h2Btn  = mkBtn("h=1.5",      88,  88, 80, 28, Color3.fromRGB(70, 90, 130))
-local h3Btn  = mkBtn("h=2",        172, 88, 80, 28, Color3.fromRGB(70, 90, 130))
-local hHalf  = mkBtn("h=1/2 len",  256, 88, 100, 28, Color3.fromRGB(70, 90, 130))
+local function mkSmall(text, x, color)
+    return mkBtn(text, x, 86, 108, 28, color)
+end
+
+local v_h1     = mkSmall("h=1",           4,   Color3.fromRGB(70, 90, 130))
+local v_hHalf  = mkSmall("h=half len",    116, Color3.fromRGB(70, 90, 130))
+local v_h025   = mkSmall("h=0.25",        228, Color3.fromRGB(70, 90, 130))
+local v_sweep  = mkSmall("sweep 0.2-2",   340, Color3.fromRGB(140, 90, 130))
+
+-- Row 3: Try cutting via all plank models in a loop
+local loopBtn = mkBtn("Loop All Planks (h=1)", 4, 118, 250, 28, Color3.fromRGB(200, 100, 60))
+local stopBtn = mkBtn("Stop",                   258, 118, 80, 28, Color3.fromRGB(150, 60, 60))
+local teleportBtn = mkBtn("TP+Cut (h=1)",       342, 118, 140, 28, Color3.fromRGB(60, 140, 100))
 
 local logBox = Instance.new("ScrollingFrame")
-logBox.Size = UDim2.new(1, -10, 1, -230)
-logBox.Position = UDim2.new(0, 5, 0, 124)
+logBox.Size = UDim2.new(1, -10, 1, -270)
+logBox.Position = UDim2.new(0, 5, 0, 152)
 logBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 6
@@ -209,118 +218,126 @@ end
 
 local function plankSize(p)
     local ok, _, size = pcall(function() return p:GetBoundingBox() end)
-    if ok then return size end
-end
-
-local function snapshot(model, tag)
-    log(("[%s] %s  pivot=%s"):format(tag, model.Name, fmtVec(model:GetPivot().Position)))
-    local ws = model:FindFirstChild("WoodSection")
-    if ws and ws:IsA("BasePart") then
-        log(("[%s] WoodSection.Size=%s  Pos=%s"):format(
-            tag, fmtVec(ws.Size), fmtVec(ws.Position)))
-    end
+    return ok and size or nil
 end
 
 -- ============================================================
---  CUT TEST
+--  TELEPORT
 -- ============================================================
-local busy = false
+local function teleportToPlank(plank)
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    if not root then return false end
 
-local function fireCut(plank, axe, height)
+    local ws = plank:FindFirstChild("WoodSection")
+    local targetPos = (ws and ws:IsA("BasePart") and ws.Position) or plank:GetPivot().Position
+
+    -- Land 3 studs to the side and 2 studs above the plank center
+    local offset = Vector3.new(3, 2, 0)
+    local goal = targetPos + offset
+    root.CFrame = CFrame.new(goal, targetPos) -- face the plank
+    task.wait(0.15) -- let the server see us move
+    return true
+end
+
+local function distanceToPlank(plank)
+    local char = LocalPlayer.Character
+    if not char then return -1 end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return -1 end
+    local ws = plank:FindFirstChild("WoodSection")
+    local targetPos = (ws and ws:IsA("BasePart") and ws.Position) or plank:GetPivot().Position
+    return (root.Position - targetPos).Magnitude
+end
+
+-- ============================================================
+--  CUT
+-- ============================================================
+local function fireCut(plank, axe, height, sectionId, faceVector)
     local cutEvent = plank:FindFirstChild("CutEvent")
-    if not cutEvent then
-        log("!! No CutEvent child."); return false
-    end
+    if not cutEvent then log("!! No CutEvent"); return false end
 
     local payload = {
-        height = height,
-        faceVector = Vector3.new(1, 0, 0),
+        height = height or 1,
+        faceVector = faceVector or Vector3.new(1, 0, 0),
         cooldown = 0.23737628459930421,
-        sectionId = 1,
+        sectionId = sectionId or 1,
         hitPoints = 1.2,
         tool = axe,
         cuttingClass = "Axe",
     }
-    log(("Firing: height=%s faceVector=(1,0,0) sectionId=1 hitPoints=1.2"):format(tostring(height)))
     local ok, err = pcall(function()
         RemoteProxy:FireServer(cutEvent, payload)
     end)
-    if not ok then
-        log("!! FireServer error: " .. tostring(err))
-        return false
-    end
+    if not ok then log("!! FireServer error: " .. tostring(err)) return false end
     return true
 end
 
-local function runCutTest(plank, heightOverride)
+local busy = false
+
+local function testOne(plank, heightOverride)
     if busy then return end
     busy = true
 
-    log("========== NEW TEST ==========")
-    log("Time: " .. os.date("%H:%M:%S"))
-    snapshot(plank, "BEFORE")
-
     local axe = findAxe()
-    if not axe then
-        log("!! No axe. Aborting."); busy = false; return
+    if not axe then log("!! No axe."); busy = false; return end
+
+    log(("---- TEST on %s ----"):format(plank.Name))
+    local ws = plank:FindFirstChild("WoodSection")
+    if ws then log(("BEFORE WoodSection.Size=%s"):format(fmtVec(ws.Size))) end
+
+    -- 1) Teleport near plank
+    local dBefore = distanceToPlank(plank)
+    teleportToPlank(plank)
+    local dAfter = distanceToPlank(plank)
+    log(("Distance before=%.2f  after=%.2f"):format(dBefore, dAfter))
+
+    -- 2) Equip the axe
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum and axe.Parent ~= char then
+        pcall(function() hum:EquipTool(axe) end)
+        task.wait(0.1)
     end
-    log("Axe: " .. toolRealName(axe))
 
-    -- Watch workspace for new objects
-    local before = {}
-    for _, c in ipairs(workspace:GetChildren()) do before[c] = true end
-    local watching = true
-    task.spawn(function()
-        local t0 = tick()
-        while watching and tick() - t0 < 2.5 do
-            for _, c in ipairs(workspace:GetChildren()) do
-                if not before[c] then
-                    before[c] = true
-                    log("[NEW] " .. c.ClassName .. " : " .. c.Name)
-                end
-            end
-            task.wait(0.1)
-        end
-    end)
-
-    -- Determine height: use override, or 1/2 the longest dim if too long
+    -- 3) Determine height
     local size = plankSize(plank)
     local useHeight = heightOverride
     if not useHeight then
         useHeight = 1
         if size then
             local maxDim = math.max(size.X, size.Y, size.Z)
-            if maxDim < 2 then
-                log(("!! Plank longest axis = %.2f studs. Too small to cut. Try a bigger one."):format(maxDim))
-                watching = false; busy = false; return
+            if maxDim < 1.5 then
+                log(("Plank too small (max=%.2f). Skipping."):format(maxDim))
+                busy = false; return
             end
-            -- Use half the longest axis if it's very long
             if maxDim > 4 then
                 useHeight = maxDim / 2
-                log(("Plank is long (%.2f) — using half (%.2f) as height."):format(maxDim, useHeight))
+                log(("Plank long (%.2f) — using h=%.2f"):format(maxDim, useHeight))
             end
         end
     end
 
-    if not fireCut(plank, axe, useHeight) then
-        watching = false; busy = false; return
-    end
+    log(("Firing cut: h=%s"):format(tostring(useHeight)))
+    fireCut(plank, axe, useHeight)
 
-    task.wait(2)
+    task.wait(1.5)
 
-    if plank.Parent then
-        snapshot(plank, "AFTER ")
+    if ws and ws.Parent then
+        log(("AFTER  WoodSection.Size=%s"):format(fmtVec(ws.Size)))
+        local s = plankSize(plank)
+        log(("AFTER  bbox=%s"):format(s and fmtVec(s) or "?"))
     else
-        log("Plank DESTROYED.")
+        log("Plank gone.")
     end
+    log("---- DONE ----")
 
-    watching = false
-    log("========== DONE =========")
     busy = false
 end
 
 -- ============================================================
---  BUTTONS
+--  BUTTON WIRING
 -- ============================================================
 local function runListPlanks()
     for _, c in ipairs(picker:GetChildren()) do
@@ -332,15 +349,12 @@ local function runListPlanks()
 
     local planks = findAllPlanks()
     log(("Found %d plank(s)."):format(#planks))
-    if #planks == 0 then picker.Visible = false; return end
+    if #planks == 0 then picker.Visible = false return end
 
-    -- Sort so the middle-sized planks (2-8 studs) come first — those are ideal test targets
     local function score(p)
         local s = plankSize(p)
         if not s then return 9999 end
-        local m = math.max(s.X, s.Y, s.Z)
-        -- Distance from ideal = 4 studs
-        return math.abs(m - 4)
+        return math.abs(math.max(s.X, s.Y, s.Z) - 4)
     end
     table.sort(planks, function(a, b) return score(a) < score(b) end)
 
@@ -357,13 +371,12 @@ local function runListPlanks()
         local ideal = (maxDim >= 2 and maxDim <= 10)
         btn.BackgroundColor3 = ideal and Color3.fromRGB(60, 140, 80)
                                        or Color3.fromRGB(70, 70, 70)
-        local tag = ideal and " *BEST*" or ""
-        btn.Text = ("  #%d  size=%s%s"):format(i, s and fmtVec(s) or "?", tag)
+        btn.Text = ("  #%d  size=%s%s"):format(i, s and fmtVec(s) or "?", ideal and " *" or "")
         btn.Parent = picker
         btn.Activated:Connect(function()
             picker.Visible = false
-            log("Picked plank #" .. i)
-            runCutTest(p)
+            log("Picked #" .. i)
+            testOne(p)
         end)
     end
     picker.Visible = true
@@ -372,24 +385,15 @@ end
 listBtn.Activated:Connect(runListPlanks)
 
 pingBtn.Activated:Connect(function()
-    if not TestPing then
-        log("!! TestPing not found in ReplicatedStorage.")
-        return
-    end
-    local ok, result = pcall(function()
-        return TestPing:InvokeServer()
-    end)
-    if ok then
-        log("TestPing result: " .. tostring(result))
-    else
-        log("TestPing error: " .. tostring(result))
-    end
+    if not TestPing then log("!! No TestPing"); return end
+    local ok, r = pcall(function() return TestPing:InvokeServer() end)
+    log("Ping: " .. (ok and tostring(r) or ("err " .. tostring(r))))
 end)
 
 copyBtn.Activated:Connect(function()
     if not setClipboard then log("!! no clipboard") return end
-    local ok, err = pcall(function() setClipboard(table.concat(logBuffer, "\n")) end)
-    if ok then log(">> Copied " .. #logBuffer .. " lines.") else log("!! " .. tostring(err)) end
+    pcall(function() setClipboard(table.concat(logBuffer, "\n")) end)
+    log(">> Copied " .. #logBuffer .. " lines.")
 end)
 
 clearBtn.Activated:Connect(function()
@@ -401,7 +405,7 @@ end)
 
 equipBtn.Activated:Connect(function()
     local axe = findAxe()
-    if not axe then log("!! No axe found.") return end
+    if not axe then log("!! No axe.") return end
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
@@ -410,22 +414,19 @@ equipBtn.Activated:Connect(function()
     end
 end)
 
--- Height variation buttons — after picking a plank, click one to test
-local function pickAndCut(height)
+--- Pick the largest plank and test with a specific height.
+local function pickBiggestAndTest(height)
     local planks = findAllPlanks()
     if #planks == 0 then log("No planks.") return end
-    -- Pick the biggest one for testing
     table.sort(planks, function(a, b)
         local sa, sb = plankSize(a), plankSize(b)
         return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
     end)
-    runCutTest(planks[1], height)
+    testOne(planks[1], height)
 end
 
-h1Btn.Activated:Connect(function() pickAndCut(1) end)
-h2Btn.Activated:Connect(function() pickAndCut(1.5) end)
-h3Btn.Activated:Connect(function() pickAndCut(2) end)
-hHalf.Activated:Connect(function()
+v_h1.Activated:Connect(function()    pickBiggestAndTest(1) end)
+v_hHalf.Activated:Connect(function()
     local planks = findAllPlanks()
     if #planks == 0 then return end
     table.sort(planks, function(a, b)
@@ -433,8 +434,93 @@ hHalf.Activated:Connect(function()
         return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
     end)
     local s = plankSize(planks[1])
-    local h = s and math.max(s.X, s.Y, s.Z) / 2 or 1
-    runCutTest(planks[1], h)
+    testOne(planks[1], s and (math.max(s.X, s.Y, s.Z) / 2) or 1)
+end)
+v_h025.Activated:Connect(function()  pickBiggestAndTest(0.25) end)
+
+--- Sweep: try h from 0.2 to 2 in small steps on the biggest plank.
+v_sweep.Activated:Connect(function()
+    local planks = findAllPlanks()
+    if #planks == 0 then return end
+    table.sort(planks, function(a, b)
+        local sa, sb = plankSize(a), plankSize(b)
+        return (sa and sa.Magnitude or 0) > (sb and sb.Magnitude or 0)
+    end)
+    local p = planks[1]
+    log("=== SWEEP h=0.2..2 on " .. p.Name .. " ===")
+    task.spawn(function()
+        local h = 0.2
+        while h <= 2.0 do
+            local axe = findAxe()
+            if not axe then break end
+            teleportToPlank(p)
+            local ws = p:FindFirstChild("WoodSection")
+            local beforeSize = ws and ws.Size
+            fireCut(p, axe, h)
+            task.wait(1.2)
+            local afterSize = ws and ws.Parent and ws.Size or nil
+            local changed = beforeSize and afterSize and
+                (beforeSize - afterSize).Magnitude > 0.01
+            log(("  h=%.2f  before=%s  after=%s  %s"):format(
+                h,
+                beforeSize and fmtVec(beforeSize) or "?",
+                afterSize and fmtVec(afterSize) or "gone",
+                changed and "<== CUT!" or ""))
+            if changed then
+                log("SUCCESS at h=" .. h)
+                return
+            end
+            h = h + 0.2
+        end
+        log("Sweep done — no height produced a cut.")
+    end)
+end)
+
+--- Loop through every plank once, teleport + cut.
+local loopRunning = false
+loopBtn.Activated:Connect(function()
+    if loopRunning then return end
+    loopRunning = true
+    local planks = findAllPlanks()
+    log(("=== LOOP over %d planks ==="):format(#planks))
+    task.spawn(function()
+        for i, p in ipairs(planks) do
+            if not loopRunning then break end
+            local axe = findAxe()
+            if not axe then break end
+            if not p.Parent then goto continue end
+
+            local ws = p:FindFirstChild("WoodSection")
+            local beforeSize = ws and ws.Size
+            local s = plankSize(p)
+            if s and math.max(s.X, s.Y, s.Z) < 1.5 then
+                -- skip tiny planks
+                goto continue
+            end
+            teleportToPlank(p)
+            fireCut(p, axe, 1)
+            task.wait(1.0)
+            local afterSize = ws and ws.Parent and ws.Size
+            local changed = beforeSize and afterSize and
+                (beforeSize - afterSize).Magnitude > 0.01
+            if changed then
+                log(("#%d CUT! %s -> %s"):format(i, fmtVec(beforeSize), fmtVec(afterSize)))
+            end
+            ::continue::
+        end
+        loopRunning = false
+        log("=== LOOP done ===")
+    end)
+end)
+
+stopBtn.Activated:Connect(function()
+    loopRunning = false
+    busy = false
+    log("Stopped.")
+end)
+
+teleportBtn.Activated:Connect(function()
+    pickBiggestAndTest(1)
 end)
 
 -- ============================================================
@@ -447,13 +533,7 @@ do
         log("Axe: " .. toolRealName(axe))
     else
         axeInfo.Text = "axe: NONE"
-        log("No axe detected.")
     end
-    log("--- HOW TO TEST ---")
-    log("1. Tap 'Test Ping' - confirms server responds.")
-    log("2. Tap 'List Planks' - green entries are good test targets (*BEST*).")
-    log("3. Pick a GREEN plank to test cut with default payload (h=1).")
-    log("4. Or use h=1.5 / h=2 / h=1/2 len buttons to try variations")
-    log("   (these pick the LARGEST plank automatically).")
-    log("5. Copy Log after each test.")
+    log("Teleport-before-cut is now enabled.")
+    log("Try: 'h=1' on a green plank, or 'sweep 0.2-2' to brute-force the height.")
 end
