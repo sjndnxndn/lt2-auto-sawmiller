@@ -1,5 +1,5 @@
--- LT2 Cut Diagnostic v9
--- Tap fallback (finds planks near tap), TreeClass shown in picker.
+-- LT2 Cut Diagnostic v10
+-- Axe cached once, no re-lookups inside the burst.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,7 +19,9 @@ local CONFIG = {
     HIT_POINTS     = 1.2,
     CUTTING_CLASS  = "Axe",
     MIN_HP         = 30,
-    TAP_SEARCH_RADIUS = 6,   -- studs around the tap hit point to look for planks
+    TAP_SEARCH_RADIUS = 6,
+    TELEPORT_SETTLE = 0.4,   -- wait after teleport before firing
+    EQUIP_SETTLE = 0.3,      -- wait after equipping
 }
 
 local setClipboard = nil
@@ -32,7 +34,7 @@ end
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag9"
+sg.Name = "LT2_CutDiag10"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -49,7 +51,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v9"
+title.Text = "LT2 Cut Diagnostic v10"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -204,14 +206,19 @@ local function findAxe()
     }
     for _, container in ipairs(order) do
         if container then
-            for _, d in ipairs(container:GetDescendants()) do
-                if d:IsA("Tool") and not seen[d] then
-                    seen[d] = true
-                    local rn = (toolRealName(d) or ""):lower()
-                    local on = (d.Name or ""):lower()
-                    if rn:find("axe") or rn:find("hatchet")
-                       or on:find("axe") or on:find("hatchet") then
-                        return d
+            local ok, descendants = pcall(function()
+                return container:GetDescendants()
+            end)
+            if ok and descendants then
+                for _, d in ipairs(descendants) do
+                    if d:IsA("Tool") and not seen[d] then
+                        seen[d] = true
+                        local rn = (toolRealName(d) or ""):lower()
+                        local on = (d.Name or ""):lower()
+                        if rn:find("axe") or rn:find("hatchet")
+                           or on:find("axe") or on:find("hatchet") then
+                            return d
+                        end
                     end
                 end
             end
@@ -248,7 +255,6 @@ local function isPlank(model)
     return true
 end
 
---- Get the wood type (TreeClass) of a plank.
 local function getWoodType(plank)
     local tc = plank:FindFirstChild("TreeClass")
     if tc and tc:IsA("StringValue") then
@@ -306,10 +312,11 @@ local function teleportToPlank(plank)
     local targetPos = ws and ws.Position or plank:GetPivot().Position
     root.CFrame = CFrame.new(targetPos + CONFIG.TELEPORT_OFFSET, targetPos)
     root.AssemblyLinearVelocity = Vector3.zero
-    task.wait(0.2)
+    task.wait(CONFIG.TELEPORT_SETTLE)
     return true
 end
 
+--- Try to equip the tool. Returns true if it succeeded.
 local function ensureEquipped(axe)
     if not axe or not axe.Parent then return false end
     local char = LocalPlayer.Character
@@ -318,32 +325,44 @@ local function ensureEquipped(axe)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
     pcall(function() hum:EquipTool(axe) end)
-    task.wait(0.2)
+    task.wait(CONFIG.EQUIP_SETTLE)
     return axe:IsDescendantOf(char)
 end
 
 -- ============================================================
---  BURST
+--  BURST (axe passed in as parameter, NOT re-found)
 -- ============================================================
-local function fireBurst(plank, height, cuts, delay)
+local function fireBurst(plank, axe, height, cuts, delay)
     local cutEvent = plank:FindFirstChild("CutEvent")
     if not cutEvent then
         log("!! No CutEvent.")
         return 0
     end
+
+    if not axe then
+        log("!! No axe reference passed.")
+        return 0
+    end
+
+    log("Firing with axe ref: " .. tostring(axe) .. " (" .. toolRealName(axe) .. ")")
+
     local fired = 0
     for i = 1, cuts do
         if not plank.Parent then
-            log("  plank gone at " .. i); break
+            log("  plank gone at cut " .. i)
+            break
         end
         if getHP() < CONFIG.MIN_HP then
-            log("  HP low, abort"); break
+            log("  HP low, aborting")
+            break
         end
-        local axe = findAxe()
-        if not axe then
-            log("  no axe at cut " .. i); break
+
+        -- Sanity check: does the axe still exist? (object identity, not location)
+        if axe == nil then
+            log("  axe reference became nil")
+            break
         end
-        ensureEquipped(axe)
+
         local payload = {
             height = height,
             faceVector = CONFIG.FACE_VECTOR,
@@ -353,15 +372,17 @@ local function fireBurst(plank, height, cuts, delay)
             tool = axe,
             cuttingClass = CONFIG.CUTTING_CLASS,
         }
-        local ok = pcall(function()
+
+        local ok, err = pcall(function()
             RemoteProxy:FireServer(cutEvent, payload)
         end)
         if ok then
             fired = fired + 1
-            log(("  cut %d/%d"):format(i, cuts))
+            log(("  cut %d/%d fired (h=%s)"):format(i, cuts, tostring(height)))
         else
-            log(("  cut %d/%d FAILED"):format(i, cuts))
+            log(("  cut %d/%d ERROR: %s"):format(i, cuts, tostring(err)))
         end
+
         task.wait(delay)
     end
     return fired
@@ -392,18 +413,37 @@ local function testOne(plank, heightMode, cuts, delay)
     local sizeBefore = getSize(plank)
     log("BEFORE size=" .. (sizeBefore and fmtVec(sizeBefore) or "?"))
 
+    -- === STEP 1: cache the axe ONCE ===
     local axe = findAxe()
     if not axe then
-        log("!! No axe anywhere:")
+        log("!! No axe found. Run 'Scan Axe'.")
         debugListTools()
         busy = false
         return
     end
-    log("Axe: " .. toolRealName(axe))
+    log("Cached axe: " .. toolRealName(axe))
 
+    -- === STEP 2: equip it ===
     ensureEquipped(axe)
+
+    -- === STEP 3: teleport ===
     teleportToPlank(plank)
 
+    -- === STEP 4: re-check axe (character change can orphan it) ===
+    if not axe or not axe.Parent then
+        log("  axe orphaned after teleport, re-finding...")
+        axe = findAxe()
+        if axe then
+            log("  re-found: " .. toolRealName(axe))
+            ensureEquipped(axe)
+        else
+            log("  !! still no axe")
+            busy = false
+            return
+        end
+    end
+
+    -- === STEP 5: resolve height ===
     local h
     if heightMode == "auto" then
         h = autoHeightFor(plank)
@@ -415,11 +455,12 @@ local function testOne(plank, heightMode, cuts, delay)
         h = heightMode or 1
     end
 
+    -- === STEP 6: fire burst with the cached axe ===
     local c = cuts or CONFIG.CUTS_PER_BURST
     local d = delay or CONFIG.BURST_DELAY
     log(("Firing %d cuts @ %.2fs, h=%s"):format(c, d, tostring(h)))
 
-    local fired = fireBurst(plank, h, c, d)
+    local fired = fireBurst(plank, axe, h, c, d)
     log(("Fired %d/%d"):format(fired, c))
     task.wait(1.0)
 
@@ -475,8 +516,7 @@ local function runListPlanks()
         btn.Font = Enum.Font.Code
         btn.TextXAlignment = Enum.TextXAlignment.Left
         btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        btn.Text = ("  #%d  [%s]  %s"):format(
-            i, wood, s and fmtVec(s) or "?")
+        btn.Text = ("  #%d  [%s]  %s"):format(i, wood, s and fmtVec(s) or "?")
         btn.Parent = picker
         btn.Activated:Connect(function()
             picker.Visible = false
@@ -558,7 +598,7 @@ p_30x05.Activated:Connect(function()
 end)
 
 -- ============================================================
---  TAP-TO-PICK (with fallback to nearby planks)
+--  TAP-TO-PICK
 -- ============================================================
 local pickEnabled = true
 
@@ -583,15 +623,12 @@ local function raycastFromScreen(pos)
     return result and result.Instance, result and result.Position or nil
 end
 
---- Find a plank whose WoodSection contains the given world position
---- OR is within radius. Used when raycast hits the plot instead of the plank.
 local function findPlankNear(worldPos, radius)
     local planks = findAllPlanks()
     local bestPlank, bestDist = nil, math.huge
     for _, p in ipairs(planks) do
         local ws = getWoodSection(p)
         if ws then
-            -- Closest point on the WoodSection part to worldPos
             local localPos = ws.CFrame:PointToObjectSpace(worldPos)
             local half = ws.Size / 2
             local clamped = Vector3.new(
@@ -617,7 +654,6 @@ local function handleTap(screenPos, gameProcessed)
     if gameProcessed then return end
     if not pickEnabled then return end
 
-    -- Ignore taps inside our GUI
     local guiObjs = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(screenPos.X, screenPos.Y)
     for _, obj in ipairs(guiObjs) do
         if obj:IsDescendantOf(sg) then return end
@@ -629,7 +665,6 @@ local function handleTap(screenPos, gameProcessed)
         return
     end
 
-    -- Case 1: direct hit on a plank model
     local model = hit:FindFirstAncestorOfClass("Model")
     if model and isPlank(model) then
         log("Tapped plank directly: " .. model.Name
@@ -638,7 +673,6 @@ local function handleTap(screenPos, gameProcessed)
         return
     end
 
-    -- Case 2: hit was not a plank (probably the plot). Look nearby.
     log(("Tap hit %s - searching %.0f studs around hit point..."):format(
         hit.Name, CONFIG.TAP_SEARCH_RADIUS))
     local nearby, dist = findPlankNear(hitPos, CONFIG.TAP_SEARCH_RADIUS)
@@ -662,6 +696,5 @@ end)
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v9 ready.")
-log("Tap a plank in the world. If ray hits the plot, we search nearby.")
-log("List button shows [wood type] next to size.")
+log("v10 ready.")
+log("Axe is cached ONCE per test. No mid-burst lookups.")
