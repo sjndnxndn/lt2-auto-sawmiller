@@ -1,6 +1,6 @@
 -- ============================================================
--- LT2 PLANK MOVER & AUTO-CUTTER v4
--- Compact UI | Reversible water stash | Manual + Auto
+-- LT2 PLANK MOVER & AUTO-CUTTER v6
+-- Size limits: W<=3.0, H<=2.6, L<=10.0
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -28,13 +28,12 @@ local CONFIG = {
     TP_SETTLE     = 0.25,
     TP_GROUND_GAP = 8,
 
-    SAWMILL_LIMITS = {
-        shabby    = 1.4,
-        fair      = 1.6,
-        sawmax01  = 2.0,
-        sawmax02  = 2.6,
-        sawmax02l = 2.6,
-    },
+    -- Sawmill size limits (studs). Applies to ALL sawmills for now.
+    -- Cross-section: the two smallest dims of the plank.
+    -- Length: the longest dim of the plank.
+    SAWMILL_MAX_WIDTH  = 3.0,
+    SAWMILL_MAX_HEIGHT = 2.6,
+    SAWMILL_MAX_LENGTH = 10.0,
 
     AUTO_INTERVAL = 2.0,
     MAX_QUEUE     = 2,
@@ -73,20 +72,15 @@ sg.DisplayOrder = 999
 sg.Parent = PlayerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Name = "Main"
 mainFrame.Size = UDim2.new(0, CONFIG.START_W, 0, CONFIG.START_H)
 mainFrame.Position = UDim2.new(0.5, -CONFIG.START_W/2, 0.5, -CONFIG.START_H/2)
 mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
-mainFrame.Visible = true
 mainFrame.Parent = sg
 
--- Title bar
 local titleBar = Instance.new("Frame")
-titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0, 28)
-titleBar.Position = UDim2.new(0, 0, 0, 0)
 titleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 titleBar.BorderSizePixel = 0
 titleBar.Active = true
@@ -104,7 +98,6 @@ titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.Parent = titleBar
 
 local closeBtn = Instance.new("TextButton")
-closeBtn.Name = "CloseBtn"
 closeBtn.Size = UDim2.new(0, 24, 0, 24)
 closeBtn.Position = UDim2.new(1, -28, 0, 2)
 closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
@@ -116,7 +109,6 @@ closeBtn.Font = Enum.Font.SourceSansBold
 closeBtn.Parent = titleBar
 
 local reopenBtn = Instance.new("TextButton")
-reopenBtn.Name = "ReopenBtn"
 reopenBtn.Size = UDim2.new(0, 44, 0, 44)
 reopenBtn.Position = UDim2.new(0, 16, 0.5, -22)
 reopenBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 100)
@@ -129,7 +121,6 @@ reopenBtn.Visible = false
 reopenBtn.Parent = sg
 
 local statusLbl = Instance.new("TextLabel")
-statusLbl.Name = "Status"
 statusLbl.Size = UDim2.new(1, -10, 0, 26)
 statusLbl.Position = UDim2.new(0, 5, 0, 32)
 statusLbl.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
@@ -151,7 +142,6 @@ local function mkBtn(text, posX, posY, sizeX, sizeY, color)
     b.TextSize = 11
     b.Font = Enum.Font.SourceSansBold
     b.TextWrapped = true
-    b.AutoButtonColor = true
     b.Parent = mainFrame
     return b
 end
@@ -171,13 +161,12 @@ div.Parent = mainFrame
 local autoMoveBtn = mkBtn("Auto Move: OFF", 0.00, 136, 0.49, 28, Color3.fromRGB(90, 90, 90))
 local autoCutBtn  = mkBtn("Auto Cut: OFF",  0.51, 136, 0.49, 28, Color3.fromRGB(90, 90, 90))
 
-local godBtn   = mkBtn("God: ON",    0.00,  168, 0.24, 26, Color3.fromRGB(60, 140, 100))
-local listBtn  = mkBtn("List",       0.25,  168, 0.24, 26, Color3.fromRGB(60, 120, 200))
-local copyBtn  = mkBtn("Copy",       0.50,  168, 0.24, 26, Color3.fromRGB(60, 180, 100))
-local clearBtn = mkBtn("Clear",      0.75,  168, 0.24, 26, Color3.fromRGB(150, 80, 80))
+local godBtn   = mkBtn("God: ON", 0.00,  168, 0.24, 26, Color3.fromRGB(60, 140, 100))
+local listBtn  = mkBtn("List",    0.25,  168, 0.24, 26, Color3.fromRGB(60, 120, 200))
+local copyBtn  = mkBtn("Copy",    0.50,  168, 0.24, 26, Color3.fromRGB(60, 180, 100))
+local clearBtn = mkBtn("Clear",   0.75,  168, 0.24, 26, Color3.fromRGB(150, 80, 80))
 
 local logBox = Instance.new("ScrollingFrame")
-logBox.Name = "Log"
 logBox.Size = UDim2.new(1, -10, 1, -210)
 logBox.Position = UDim2.new(0, 5, 0, 200)
 logBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
@@ -193,7 +182,6 @@ logLayout.SortOrder = Enum.SortOrder.LayoutOrder
 logLayout.Parent = logBox
 
 local picker = Instance.new("ScrollingFrame")
-picker.Name = "Picker"
 picker.Size = UDim2.new(1, -10, 0, 170)
 picker.Position = UDim2.new(0, 5, 1, -178)
 picker.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
@@ -233,10 +221,7 @@ local hTR = mkHandle("RT", 1, 0)
 local hBL = mkHandle("LB", 0, 1)
 local hTL = mkHandle("LT", 0, 0)
 
-local resizing = false
-local resizeStart
-local resizeStartSize
-local resizeCorner
+local resizing, resizeStart, resizeStartSize, resizeCorner = false, nil, nil, nil
 
 local function beginResize(corner, input)
     resizing = true
@@ -259,14 +244,9 @@ local function updateResize(input)
     mainFrame.Size = UDim2.new(0, w, 0, h)
 end
 
-local function endResize()
-    resizing = false
-    resizeCorner = nil
-end
+local function endResize() resizing = false; resizeCorner = nil end
 
-for _, pair in ipairs({
-    {hBR, "RB"}, {hTR, "RT"}, {hBL, "LB"}, {hTL, "LT"},
-}) do
+for _, pair in ipairs({{hBR,"RB"},{hTR,"RT"},{hBL,"LB"},{hTL,"LT"}}) do
     local h, corner = pair[1], pair[2]
     h.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -354,7 +334,7 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 -- ============================================================
--- WATER STASH (reversible)
+-- WATER STASH
 -- ============================================================
 local function stashWater()
     if #state.waterStash > 0 then return 0 end
@@ -420,12 +400,11 @@ local function toolRealName(tool)
 end
 
 local function findAxe()
-    local order = {
+    for _, cont in ipairs({
         LocalPlayer:FindFirstChild("Backpack"),
         LocalPlayer:FindFirstChild("Tools"),
         LocalPlayer.Character,
-    }
-    for _, cont in ipairs(order) do
+    }) do
         if cont then
             for _, d in ipairs(cont:GetDescendants()) do
                 if d:IsA("Tool") then
@@ -456,15 +435,13 @@ end
 local function isPlank(model)
     if not model or not model:IsA("Model") then return false end
     if not ownerMatches(model, LocalPlayer) then return false end
-    if not model:FindFirstChild("CutEvent") then return false end
-    return true
+    return model:FindFirstChild("CutEvent") ~= nil
 end
 
 local function isSawmill(model)
     if not model or not model:IsA("Model") then return false end
     if not ownerMatches(model, LocalPlayer) then return false end
-    if not model:FindFirstChild("Conveyor") then return false end
-    return true
+    return model:FindFirstChild("Conveyor") ~= nil
 end
 
 local function findAllPlanks()
@@ -579,12 +556,12 @@ local function fireCut(plank, axe, height)
     local cutEvent = plank:FindFirstChild("CutEvent")
     if not cutEvent or not axe then return false end
     local payload = {
-        height      = height,
-        faceVector  = CONFIG.FACE_VECTOR,
-        cooldown    = CONFIG.COOLDOWN,
-        sectionId   = CONFIG.SECTION_ID,
-        hitPoints   = CONFIG.HIT_POINTS,
-        tool        = axe,
+        height       = height,
+        faceVector   = CONFIG.FACE_VECTOR,
+        cooldown     = CONFIG.COOLDOWN,
+        sectionId    = CONFIG.SECTION_ID,
+        hitPoints    = CONFIG.HIT_POINTS,
+        tool         = axe,
         cuttingClass = CONFIG.CUTTING_CLASS,
     }
     return pcall(function() RemoteProxy:FireServer(cutEvent, payload) end)
@@ -697,24 +674,42 @@ local function movePlankToSawmill(plank, sawmill)
 end
 
 -- ============================================================
--- SAWMILL CHECKS
+-- SAWMILL SIZE
 -- ============================================================
-local function getSawmillMaxSize(sawmill)
-    if not sawmill then return nil end
-    local n = sawmill.Name:lower()
-    for key, val in pairs(CONFIG.SAWMILL_LIMITS) do
-        if n:find(key) then return val end
-    end
-    return CONFIG.SAWMILL_LIMITS.shabby
-end
-
+--- Check if a plank fits inside a sawmill's limits.
+--- Rules:
+---   - Sort dims ascending: [smallest, middle, largest]
+---   - Smallest  <= SAWMILL_MAX_HEIGHT (2.6)
+---   - Middle    <= SAWMILL_MAX_WIDTH  (3.0)
+---   - Largest   <= SAWMILL_MAX_LENGTH (10.0)
+--- Returns: (fits, reasonString)
 local function plankFitsSawmill(plank, sawmill)
-    if not plank or not sawmill then return false end
+    if not plank then return false, "no plank" end
     local s = getSize(plank)
-    if not s then return false end
+    if not s then return false, "no size" end
+
     local dims = {s.X, s.Y, s.Z}
     table.sort(dims)
-    return dims[1] <= getSawmillMaxSize(sawmill)
+    local smallest, middle, largest = dims[1], dims[2], dims[3]
+
+    if smallest > CONFIG.SAWMILL_MAX_HEIGHT then
+        return false, string.format("height %.2f > %.2f", smallest, CONFIG.SAWMILL_MAX_HEIGHT)
+    end
+    if middle > CONFIG.SAWMILL_MAX_WIDTH then
+        return false, string.format("width %.2f > %.2f", middle, CONFIG.SAWMILL_MAX_WIDTH)
+    end
+    if largest > CONFIG.SAWMILL_MAX_LENGTH then
+        return false, string.format("length %.2f > %.2f", largest, CONFIG.SAWMILL_MAX_LENGTH)
+    end
+    return true, "fits"
+end
+
+--- Human-readable summary of the sawmill limits.
+local function sawmillLimitString()
+    return string.format("W<=%.1f H<=%.1f L<=%.1f",
+        CONFIG.SAWMILL_MAX_WIDTH,
+        CONFIG.SAWMILL_MAX_HEIGHT,
+        CONFIG.SAWMILL_MAX_LENGTH)
 end
 
 local function sawmillQueueFull(sawmill)
@@ -754,7 +749,7 @@ local function startAutoLoop()
                 end
             end
             if not target then
-                setStatus("Auto: no plank fits")
+                setStatus("Auto: no plank fits (" .. sawmillLimitString() .. ")")
                 task.wait(CONFIG.AUTO_INTERVAL); continue
             end
             setStatus("Auto: moving " .. getWoodType(target))
@@ -773,12 +768,12 @@ local function startAutoLoop()
 end
 
 -- ============================================================
--- TAP TO PICK
+-- TAP / PICK
 -- ============================================================
-local function raycastScreen(pos)
+local function raycastScreen(vpPos)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
-    local ray = cam:ViewportPointToRay(pos.X, pos.Y)
+    local ray = cam:ViewportPointToRay(vpPos.X, vpPos.Y)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {sg, LocalPlayer.Character}
@@ -822,12 +817,15 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.UserInputType ~= Enum.UserInputType.MouseButton1
        and input.UserInputType ~= Enum.UserInputType.Touch then return end
-    local pos = input.Position
-    local guiObjs = PlayerGui:GetGuiObjectsAtPosition(pos.X, pos.Y)
+
+    local screenPos = input.Position
+    local guiObjs = PlayerGui:GetGuiObjectsAtPosition(screenPos.X, screenPos.Y)
     for _, obj in ipairs(guiObjs) do
         if obj:IsDescendantOf(sg) then return end
     end
-    local hit, hitPos = raycastScreen(pos)
+
+    local vp = UserInputService:GetMouseLocation()
+    local hit, hitPos = raycastScreen(vp)
     if not hit then return end
 
     if state.waitingSawmill then
@@ -866,7 +864,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
                 setStatus("Plank: " .. getWoodType(near))
                 log("Plank (nearby): " .. getWoodType(near))
             else
-                log("Not a plank.")
+                log("Not a plank. (hit " .. hit.Name .. ")")
             end
         end
         return
@@ -895,9 +893,14 @@ moveBtn.Activated:Connect(function()
     if not state.selectedSawmill then log("No sawmill selected."); return end
     if not state.selectedPlank then log("No plank selected."); return end
     if not state.selectedPlank.Parent then log("Plank gone."); return end
-    if not plankFitsSawmill(state.selectedPlank, state.selectedSawmill) then
-        log("Plank too wide."); return
+
+    local size = getSize(state.selectedPlank)
+    local fits, reason = plankFitsSawmill(state.selectedPlank, state.selectedSawmill)
+    if not fits then
+        log(string.format("Warning: %s (%s) - moving anyway.",
+            size and fmtVec(size) or "?", reason))
     end
+
     state.busy = true
     setStatus("Moving plank...")
     if movePlankToSawmill(state.selectedPlank, state.selectedSawmill) then
@@ -925,7 +928,7 @@ autoMoveBtn.Activated:Connect(function()
     if state.autoMode then
         autoMoveBtn.Text = "Auto Move: ON"
         autoMoveBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 100)
-        log("Auto mode ON.")
+        log("Auto mode ON. Limits: " .. sawmillLimitString())
         startAutoLoop()
     else
         autoMoveBtn.Text = "Auto Move: OFF"
@@ -965,20 +968,23 @@ listBtn.Activated:Connect(function()
         if c:IsA("TextButton") then c:Destroy() end
     end
     local planks = findAllPlanks()
-    log("Found " .. #planks .. " planks.")
+    log("Found " .. #planks .. " planks. Limits: " .. sawmillLimitString())
     if #planks == 0 then picker.Visible = false return end
     for i, p in ipairs(planks) do
         local s = getSize(p)
+        local fits, reason = plankFitsSawmill(p, nil)
         local b = Instance.new("TextButton")
         b.Size = UDim2.new(1, -6, 0, 26)
-        b.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        b.BackgroundColor3 = fits and Color3.fromRGB(60, 120, 80) or Color3.fromRGB(70, 70, 70)
         b.BorderSizePixel = 0
         b.TextColor3 = Color3.fromRGB(255, 255, 255)
         b.TextSize = 10
         b.Font = Enum.Font.Code
         b.TextXAlignment = Enum.TextXAlignment.Left
         b.ZIndex = 11
-        b.Text = ("  #%d [%s] %s"):format(i, getWoodType(p), s and fmtVec(s) or "?")
+        b.Text = ("  #%d [%s] %s %s"):format(
+            i, getWoodType(p), s and fmtVec(s) or "?",
+            fits and "" or ("- " .. reason))
         b.Parent = picker
         b.Activated:Connect(function()
             picker.Visible = false
@@ -1012,6 +1018,6 @@ end)
 -- STARTUP
 -- ============================================================
 log("Ready.")
+log("Limits: " .. sawmillLimitString())
 log("Drag gray corners to resize.")
-log("Water stashes during cut, restores after.")
 log("1) Select sawmill, 2) select plank, 3) move or cut.")
