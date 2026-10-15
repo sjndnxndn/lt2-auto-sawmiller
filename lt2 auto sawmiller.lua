@@ -1,6 +1,5 @@
--- LT2 Cut Diagnostic v13
--- Uses Backpack tool (UNEQUIPPED) as the tool payload, like the game's own example.
--- No teleport. No equip.
+-- LT2 Cut Diagnostic v14
+-- Auto-removes water, tries every payload variation.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,27 +11,19 @@ local Interaction = ReplicatedStorage:WaitForChild("Interaction")
 local RemoteProxy = Interaction:WaitForChild("RemoteProxy")
 
 local CONFIG = {
-    CUTS_PER_BURST = 10,
-    BURST_DELAY    = 1.0,
-    MIN_HP         = 40,
-    TAP_RADIUS     = 8,
-    GODMODE        = true,
+    MIN_HP      = 40,
+    TAP_RADIUS  = 8,
+    BURST_DELAY = 1.0,
+    TELEPORT_SETTLE = 0.3,
 }
 
-local setClipboard = nil
-if type(setclipboard) == "function" then setClipboard = setclipboard
-elseif type(toclipboard) == "function" then setClipboard = toclipboard
-elseif type(writeClipboard) == "function" then setClipboard = writeClipboard
-end
-
 -- ============================================================
---  GODMODE
+--  GODMODE (HP reset + optional metatable hook)
 -- ============================================================
 local godConn
 local function applyGod()
     if godConn then return end
     godConn = RunService.Heartbeat:Connect(function()
-        if not CONFIG.GODMODE then return end
         local c = LocalPlayer.Character
         if not c then return end
         local h = c:FindFirstChildOfClass("Humanoid")
@@ -42,22 +33,73 @@ end
 local function stopGod()
     if godConn then godConn:Disconnect(); godConn = nil end
 end
+applyGod()
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5); if CONFIG.GODMODE then stopGod(); applyGod() end
+    task.wait(0.5); stopGod(); applyGod()
 end)
-if CONFIG.GODMODE then applyGod() end
+
+-- Optional: block TakeDamage via metatable if executor supports it
+pcall(function()
+    local mt = getrawmetatable(game)
+    local old = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if method == "TakeDamage" and self:IsA("Humanoid")
+           and self:IsDescendantOf(LocalPlayer.Character) then
+            return 0
+        end
+        return old(self, ...)
+    end)
+    setreadonly(mt, true)
+end)
+
+-- ============================================================
+--  WATER REMOVAL
+-- ============================================================
+local function nukeWater()
+    local count = 0
+    local terms = {"water", "swamp", "ocean", "river", "lake", "sea", "damagezone", "hazard"}
+    local snap = {}
+    for _, d in ipairs(workspace:GetDescendants()) do
+        table.insert(snap, d)
+    end
+    for _, d in ipairs(snap) do
+        if d and d.Parent then
+            local kind = d:IsA("BasePart") or d:IsA("Folder") or d:IsA("Model") or d:IsA("TrussPart")
+            if kind then
+                local n = d.Name:lower()
+                local hit = false
+                for _, t in ipairs(terms) do
+                    if n:find(t) then hit = true; break end
+                end
+                if hit then
+                    pcall(function() d:Destroy() end)
+                    count = count + 1
+                end
+            end
+        end
+    end
+    return count
+end
+
+-- Run on load
+task.spawn(function()
+    local n = nukeWater()
+    print("[v14] Water removed:", n, "objects")
+end)
 
 -- ============================================================
 --  GUI
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "LT2_CutDiag13"
+sg.Name = "LT2_CutDiag14"
 sg.ResetOnSpawn = false
 sg.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 580, 0, 470)
-frame.Position = UDim2.new(0.5, -290, 0.5, -235)
+frame.Size = UDim2.new(0, 580, 0, 500)
+frame.Position = UDim2.new(0.5, -290, 0.5, -250)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -68,7 +110,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 28)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "LT2 Cut Diagnostic v13 - backpack tool"
+title.Text = "LT2 Cut Diagnostic v14"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -82,41 +124,76 @@ local function mkBtn(text, x, y, w, h, color)
     b.BorderSizePixel = 0
     b.Text = text
     b.TextColor3 = Color3.fromRGB(255, 255, 255)
-    b.TextSize = 12
+    b.TextSize = 11
     b.Font = Enum.Font.SourceSansBold
     b.TextWrapped = true
     b.Parent = frame
     return b
 end
 
-local listBtn  = mkBtn("List",      4,   32, 55, 30, Color3.fromRGB(60, 120, 200))
-local copyBtn  = mkBtn("Copy",      62,  32, 55, 30, Color3.fromRGB(60, 180, 100))
-local clearBtn = mkBtn("Clear",     120, 32, 55, 30, Color3.fromRGB(150, 80, 80))
-local bpBtn    = mkBtn("To BP",     178, 32, 55, 30, Color3.fromRGB(200, 140, 50))
-local stopBtn  = mkBtn("STOP",      236, 32, 55, 30, Color3.fromRGB(200, 50, 50))
-local godBtn   = mkBtn("God: ON",   294, 32, 80, 30, Color3.fromRGB(60, 140, 100))
-local dumpBtn  = mkBtn("Dump Tool", 378, 32, 90, 30, Color3.fromRGB(120, 120, 200))
-local valBtn   = mkBtn("Dump Vals", 472, 32, 90, 30, Color3.fromRGB(120, 120, 200))
+-- Row 1
+local listBtn   = mkBtn("List",        4,   32, 50, 30, Color3.fromRGB(60, 120, 200))
+local copyBtn   = mkBtn("Copy",        58,  32, 50, 30, Color3.fromRGB(60, 180, 100))
+local clearBtn  = mkBtn("Clear",       112, 32, 50, 30, Color3.fromRGB(150, 80, 80))
+local waterBtn  = mkBtn("Nuke H2O",    166, 32, 70, 30, Color3.fromRGB(60, 160, 200))
+local stopBtn   = mkBtn("STOP",        240, 32, 50, 30, Color3.fromRGB(200, 50, 50))
+local toBpBtn   = mkBtn("To BP",       294, 32, 55, 30, Color3.fromRGB(200, 140, 50))
 
 local axeInfo = Instance.new("TextLabel")
-axeInfo.Size = UDim2.new(1, -100, 0, 30)
-axeInfo.Position = UDim2.new(0, 4, 0, 66)
+axeInfo.Size = UDim2.new(1, -355, 0, 30)
+axeInfo.Position = UDim2.new(0, 355, 0, 32)
 axeInfo.BackgroundTransparency = 1
 axeInfo.Text = "axe: ?"
 axeInfo.TextColor3 = Color3.fromRGB(255, 200, 100)
-axeInfo.TextSize = 11
+axeInfo.TextSize = 10
 axeInfo.Font = Enum.Font.Code
 axeInfo.TextXAlignment = Enum.TextXAlignment.Left
 axeInfo.Parent = frame
 
-local v_bp    = mkBtn("Test: BP Tool",      4,   92, 140, 28, Color3.fromRGB(60, 140, 80))
-local v_bp2   = mkBtn("Test: BP Tool x5",   148, 92, 140, 28, Color3.fromRGB(70, 90, 130))
-local v_both  = mkBtn("Test: BP + Equip",   292, 92, 140, 28, Color3.fromRGB(140, 90, 130))
-local v_range = mkBtn("Test: h=Range",      436, 92, 120, 28, Color3.fromRGB(140, 100, 60))
+local lbl2 = Instance.new("TextLabel")
+lbl2.Size = UDim2.new(1, -8, 0, 18)
+lbl2.Position = UDim2.new(0, 4, 0, 66)
+lbl2.BackgroundTransparency = 1
+lbl2.Text = "Payload tests (all pick largest plank automatically):"
+lbl2.TextColor3 = Color3.fromRGB(200, 200, 200)
+lbl2.TextSize = 11
+lbl2.Font = Enum.Font.SourceSansBold
+lbl2.TextXAlignment = Enum.TextXAlignment.Left
+lbl2.Parent = frame
+
+-- Row 2
+local v_exact = mkBtn("Exact",     4,   86, 90, 26, Color3.fromRGB(70, 130, 90))
+local v_sweep = mkBtn("Sweep h",   98,  86, 90, 26, Color3.fromRGB(70, 90, 130))
+local v_dirs  = mkBtn("Face dirs", 192, 86, 90, 26, Color3.fromRGB(70, 90, 130))
+local v_sect  = mkBtn("Sections",  286, 86, 90, 26, Color3.fromRGB(70, 90, 130))
+local v_equip = mkBtn("Equipped",  380, 86, 90, 26, Color3.fromRGB(140, 90, 130))
+local v_all   = mkBtn("TRY ALL",   474, 86, 100, 26, Color3.fromRGB(200, 60, 60))
+
+local lbl3 = Instance.new("TextLabel")
+lbl3.Size = UDim2.new(1, -8, 0, 18)
+lbl3.Position = UDim2.new(0, 4, 0, 116)
+lbl3.BackgroundTransparency = 1
+lbl3.Text = "Reference payload used:"
+lbl3.TextColor3 = Color3.fromRGB(200, 200, 200)
+lbl3.TextSize = 11
+lbl3.Font = Enum.Font.SourceSansBold
+lbl3.TextXAlignment = Enum.TextXAlignment.Left
+lbl3.Parent = frame
+
+local refVal = Instance.new("TextLabel")
+refVal.Size = UDim2.new(1, -8, 0, 18)
+refVal.Position = UDim2.new(0, 4, 0, 134)
+refVal.BackgroundTransparency = 1
+refVal.Text = "h=1.5217 face=(1,0,0) cd=0.237 hp=1.2 sect=1"
+refVal.TextColor3 = Color3.fromRGB(150, 200, 150)
+refVal.TextSize = 10
+refVal.Font = Enum.Font.Code
+refVal.TextXAlignment = Enum.TextXAlignment.Left
+refVal.Parent = frame
 
 local logBox = Instance.new("ScrollingFrame")
-logBox.Size = UDim2.new(1, -10, 1, -260)
-logBox.Position = UDim2.new(0, 5, 0, 130)
+logBox.Size = UDim2.new(1, -10, 1, -290)
+logBox.Position = UDim2.new(0, 5, 0, 158)
 logBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 logBox.BorderSizePixel = 0
 logBox.ScrollBarThickness = 6
@@ -146,7 +223,6 @@ pickerLayout.SortOrder = Enum.SortOrder.LayoutOrder
 pickerLayout.Parent = picker
 
 local logBuffer = {}
-
 local function log(msg)
     table.insert(logBuffer, msg)
     local l = Instance.new("TextLabel")
@@ -175,7 +251,7 @@ end
 
 local function fmtVec(v)
     if not v then return "nil" end
-    return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
+    return string.format("(%.2f,%.2f,%.2f)", v.X, v.Y, v.Z)
 end
 
 local function toolRealName(tool)
@@ -187,17 +263,23 @@ local function toolRealName(tool)
     return tool.Name
 end
 
---- Look for the tool ONLY in the Backpack (unequipped), like the game's example.
-local function findBackpackTool()
+--- Find axe in Backpack or Character.
+local function findAxe()
     local bp = LocalPlayer:FindFirstChild("Backpack")
-    if not bp then return nil end
-    for _, d in ipairs(bp:GetChildren()) do
-        if d:IsA("Tool") then
-            local rn = (toolRealName(d) or ""):lower()
-            local on = (d.Name or ""):lower()
-            if rn:find("axe") or rn:find("hatchet")
-               or on:find("axe") or on:find("hatchet") then
-                return d
+    if bp then
+        for _, d in ipairs(bp:GetChildren()) do
+            if d:IsA("Tool") then
+                local rn = (toolRealName(d) or ""):lower()
+                if rn:find("axe") or rn:find("hatchet") then return d end
+            end
+        end
+    end
+    local c = LocalPlayer.Character
+    if c then
+        for _, d in ipairs(c:GetChildren()) do
+            if d:IsA("Tool") then
+                local rn = (toolRealName(d) or ""):lower()
+                if rn:find("axe") or rn:find("hatchet") then return d end
             end
         end
     end
@@ -255,7 +337,7 @@ local function getHP()
     return h and h.Health or 100
 end
 
-local function distanceToPlank(plank)
+local function distanceTo(plank)
     local c = LocalPlayer.Character
     if not c then return -1 end
     local root = c:FindFirstChild("HumanoidRootPart")
@@ -265,7 +347,6 @@ local function distanceToPlank(plank)
     return (root.Position - pos).Magnitude
 end
 
---- Move the axe to Backpack (unequip it) if it's currently held.
 local function moveAxeToBackpack()
     local c = LocalPlayer.Character
     if not c then return end
@@ -277,140 +358,211 @@ local function moveAxeToBackpack()
 end
 
 -- ============================================================
---  FIRE
+--  FIRE CORE
 -- ============================================================
-local function fireOnce(plank, tool, height)
+local function fire(plank, tool, height, faceVector, sectionId, cooldown, hitPoints)
     local cutEvent = plank:FindFirstChild("CutEvent")
-    if not cutEvent then return false, "no CutEvent" end
-    if not tool then return false, "no tool" end
-
+    if not cutEvent or not tool then return false end
     local payload = {
-        height = height or 1,
-        faceVector = Vector3.new(1, 0, 0),
-        cooldown = 0.23737628459930421,
-        sectionId = 1,
-        hitPoints = 1.2,
+        height = height,
+        faceVector = faceVector or Vector3.new(1, 0, 0),
+        cooldown = cooldown or 0.23737628459930421,
+        sectionId = sectionId or 1,
+        hitPoints = hitPoints or 1.2,
         tool = tool,
         cuttingClass = "Axe",
     }
-    local ok, err = pcall(function()
-        RemoteProxy:FireServer(cutEvent, payload)
-    end)
-    return ok, err
+    return pcall(function() RemoteProxy:FireServer(cutEvent, payload) end)
+end
+
+local function tryFire(plank, height, faceVector, sectionId)
+    moveAxeToBackpack()
+    local tool = findAxe()
+    if not tool then return false, "no axe" end
+    local before = getSize(plank)
+    fire(plank, tool, height, faceVector, sectionId)
+    task.wait(1.0)
+    local after = getSize(plank)
+    if not plank.Parent then return true, "destroyed" end
+    if not before or not after then return false, "no size" end
+    local diff = (before - after).Magnitude
+    if diff > 0.05 then
+        return true, string.format("size %.2f->%.2f", before.Y, after.Y)
+    end
+    return false, "no change"
 end
 
 -- ============================================================
---  TEST
+--  TESTS
 -- ============================================================
 local busy = false
+local function pickBiggest()
+    local planks = findAllPlanks()
+    if #planks == 0 then return nil end
+    table.sort(planks, function(a, b)
+        return (getSize(a) and getSize(a).Magnitude or 0) >
+               (getSize(b) and getSize(b).Magnitude or 0)
+    end)
+    return planks[1]
+end
 
-local function testOne(plank, mode)
+local function testExact()
     if busy then return end
     busy = true
+    local p = pickBiggest()
+    if not p then log("No planks"); busy = false return end
+    log("=== EXACT payload on " .. getWoodType(p) .. " " .. fmtVec(getSize(p)) .. " ===")
+    local ok, why = tryFire(p, 1.5217468291521072, Vector3.new(1,0,0), 1)
+    log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
+    busy = false
+end
 
-    log("========== TEST (" .. mode .. ") ==========")
-    log("Plank: " .. plank.Name .. " wood=" .. getWoodType(plank))
-    local before = getSize(plank)
-    log("BEFORE size=" .. (before and fmtVec(before) or "?"))
-    log(("Distance: %.2f  HP: %.0f"):format(distanceToPlank(plank), getHP()))
-
-    -- Make sure axe is in Backpack
-    moveAxeToBackpack()
-
-    local tool = findBackpackTool()
-    if not tool then
-        log("!! No axe in Backpack.")
-        busy = false
-        return
-    end
-    log("Backpack tool: " .. toolRealName(tool) .. "  (obj=" .. tool.Name .. ")")
-
-    -- Determine height
-    local h = 1
-    if mode == "h_range" then
-        local rv = tool:FindFirstChild("Range")
-        if rv and rv:IsA("NumberValue") then
-            h = rv.Value
-            log(("Range value = %.2f"):format(h))
-        end
-    end
-
-    local cuts = (mode == "x5") and 5 or CONFIG.CUTS_PER_BURST
-    local delay = CONFIG.BURST_DELAY
-
-    for i = 1, cuts do
-        if not plank.Parent then
-            log("  plank gone at " .. i); break
-        end
-        if getHP() < CONFIG.MIN_HP then
-            log(("  HP %.0f < %d, abort"):format(getHP(), CONFIG.MIN_HP))
-            break
-        end
-
-        -- Re-read tool every cut (Backpack tool might have changed name/place)
-        tool = findBackpackTool()
-        if not tool then
-            log("  no backpack tool at cut " .. i); break
-        end
-
-        local ok, err = fireOnce(plank, tool, h)
-        if ok then
-            log(("  cut %d/%d fired (h=%s) hp=%.0f"):format(i, cuts, tostring(h), getHP()))
-        else
-            log(("  cut %d/%d FAIL: %s"):format(i, cuts, tostring(err)))
-        end
-
-        task.wait(delay)
-    end
-
-    task.wait(1.0)
-    if plank.Parent then
-        local after = getSize(plank)
-        log("AFTER size=" .. (after and fmtVec(after) or "?"))
+local function testSweep()
+    if busy then return end
+    busy = true
+    local p = pickBiggest()
+    if not p then log("No planks"); busy = false return end
+    log("=== SWEEP heights on " .. getWoodType(p) .. " " .. fmtVec(getSize(p)) .. " ===")
+    local heights = {0.5, 1, 1.5, 2, 3, 4, 5, 8, 12, 20, 30}
+    for _, h in ipairs(heights) do
+        if getHP() < CONFIG.MIN_HP then log("  HP low, stop"); break end
+        if not p.Parent then log("  plank gone"); break end
+        local before = getSize(p)
+        moveAxeToBackpack()
+        local tool = findAxe()
+        if not tool then log("  no axe"); break end
+        fire(p, tool, h, Vector3.new(1,0,0), 1)
+        task.wait(1.0)
+        local after = getSize(p)
+        if not p.Parent then log(("  h=%.2f -> DESTROYED"):format(h)); break end
         if before and after then
             local d = (before - after).Magnitude
-            if d > 0.05 then
-                log(("*** WORKED! diff=%.2f ***"):format(d))
-            else
-                log("No size change.")
-            end
+            log(("  h=%.2f  before=%s after=%s  %s"):format(h,
+                fmtVec(before), fmtVec(after), d > 0.05 and "<<< WORKED" or ""))
+            if d > 0.05 then log("  SUCCESS at h=" .. h); break end
         end
-    else
-        log("Plank DESTROYED!")
     end
-    log("========== DONE ==========")
+    log("=== SWEEP DONE ===")
     busy = false
+end
+
+local function testDirs()
+    if busy then return end
+    busy = true
+    local p = pickBiggest()
+    if not p then log("No planks"); busy = false return end
+    log("=== FACE VECTORS on " .. getWoodType(p) .. " ===")
+    local dirs = {
+        {"+X", Vector3.new(1,0,0)},
+        {"-X", Vector3.new(-1,0,0)},
+        {"+Y", Vector3.new(0,1,0)},
+        {"-Y", Vector3.new(0,-1,0)},
+        {"+Z", Vector3.new(0,0,1)},
+        {"-Z", Vector3.new(0,0,-1)},
+        {"UP+Y", Vector3.new(0,1,0)},
+    }
+    for _, entry in ipairs(dirs) do
+        if not p.Parent then break end
+        local name, dir = entry[1], entry[2]
+        local before = getSize(p)
+        moveAxeToBackpack()
+        local tool = findAxe()
+        if not tool then break end
+        fire(p, tool, 1.5217468291521072, dir, 1)
+        task.wait(1.0)
+        local after = getSize(p)
+        if not p.Parent then log("  dir=" .. name .. " DESTROYED"); break end
+        local d = (before and after) and (before - after).Magnitude or 0
+        log(("  dir=%s  %s"):format(name, d > 0.05 and "<<< WORKED" or "no"))
+        if d > 0.05 then log("  SUCCESS dir=" .. name); break end
+    end
+    log("=== DIRS DONE ===")
+    busy = false
+end
+
+local function testSections()
+    if busy then return end
+    busy = true
+    local p = pickBiggest()
+    if not p then log("No planks"); busy = false return end
+    log("=== SECTION IDS on " .. getWoodType(p) .. " ===")
+    for s = 1, 6 do
+        if not p.Parent then break end
+        local before = getSize(p)
+        moveAxeToBackpack()
+        local tool = findAxe()
+        if not tool then break end
+        fire(p, tool, 1.5217468291521072, Vector3.new(1,0,0), s)
+        task.wait(1.0)
+        local after = getSize(p)
+        if not p.Parent then log("  sect=" .. s .. " DESTROYED"); break end
+        local d = (before and after) and (before - after).Magnitude or 0
+        log(("  sect=%d  %s"):format(s, d > 0.05 and "<<< WORKED" or "no"))
+        if d > 0.05 then log("  SUCCESS sect=" .. s); break end
+    end
+    log("=== SECTIONS DONE ===")
+    busy = false
+end
+
+local function testEquipped()
+    if busy then return end
+    busy = true
+    local p = pickBiggest()
+    if not p then log("No planks"); busy = false return end
+    log("=== EQUIPPED AXE on " .. getWoodType(p) .. " ===")
+    -- equip
+    local tool = findAxe()
+    if not tool then log("no axe"); busy = false return end
+    local c = LocalPlayer.Character
+    local h = c and c:FindFirstChildOfClass("Humanoid")
+    if h then pcall(function() h:EquipTool(tool) end) end
+    task.wait(0.5)
+    tool = findAxe()
+    if not tool then log("axe lost on equip"); busy = false return end
+    local before = getSize(p)
+    fire(p, tool, 1.5217468291521072, Vector3.new(1,0,0), 1)
+    task.wait(1.0)
+    local after = getSize(p)
+    if not p.Parent then log("  DESTROYED"); busy = false return end
+    local d = (before and after) and (before - after).Magnitude or 0
+    log(("  equipped: %s"):format(d > 0.05 and "WORKED" or "no"))
+    busy = false
+end
+
+local function testAll()
+    if busy then return end
+    log("################ TRY ALL ################")
+    testExact()
+    task.wait(0.5)
+    testSweep()
+    task.wait(0.5)
+    testDirs()
+    task.wait(0.5)
+    testSections()
+    task.wait(0.5)
+    testEquipped()
+    log("################ TRY ALL DONE ################")
 end
 
 -- ============================================================
 --  BUTTONS
 -- ============================================================
 local function refreshAxeLabel()
-    local bp = findBackpackTool()
-    if bp then
-        axeInfo.Text = "backpack axe: " .. toolRealName(bp)
-        return
+    local a = findAxe()
+    if a then
+        axeInfo.Text = "axe: " .. toolRealName(a) .. " (" .. a.Parent.Name .. ")"
+    else
+        axeInfo.Text = "axe: NONE"
     end
-    -- Check character
-    local c = LocalPlayer.Character
-    if c then
-        for _, d in ipairs(c:GetChildren()) do
-            if d:IsA("Tool") then
-                axeInfo.Text = "axe is HELD: " .. toolRealName(d) .. " (unequip it)"
-                return
-            end
-        end
-    end
-    axeInfo.Text = "axe: NONE"
 end
 
-local function runListPlanks()
+local function runList()
     for _, c in ipairs(picker:GetChildren()) do
         if c:IsA("TextButton") then c:Destroy() end
     end
     refreshAxeLabel()
     local planks = findAllPlanks()
-    log(("Found %d plank(s)."):format(#planks))
+    log(("Found %d planks."):format(#planks))
     if #planks == 0 then picker.Visible = false return end
     table.sort(planks, function(a, b)
         return (getSize(a) and getSize(a).Magnitude or 0) >
@@ -418,7 +570,6 @@ local function runListPlanks()
     end)
     for i, p in ipairs(planks) do
         local s = getSize(p)
-        local w = getWoodType(p)
         local b = Instance.new("TextButton")
         b.Size = UDim2.new(1, -6, 0, 28)
         b.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
@@ -427,17 +578,23 @@ local function runListPlanks()
         b.TextSize = 11
         b.Font = Enum.Font.Code
         b.TextXAlignment = Enum.TextXAlignment.Left
-        b.Text = ("  #%d [%s] %s"):format(i, w, s and fmtVec(s) or "?")
+        b.Text = ("  #%d [%s] %s"):format(i, getWoodType(p), s and fmtVec(s) or "?")
         b.Parent = picker
         b.Activated:Connect(function()
             picker.Visible = false
-            testOne(p, "bp")
+            log("Picked #" .. i)
+            if busy then return end
+            busy = true
+            log("=== Exact payload on picked plank ===")
+            local ok, why = tryFire(p, 1.5217468291521072, Vector3.new(1,0,0), 1)
+            log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
+            busy = false
         end)
     end
     picker.Visible = true
 end
 
-listBtn.Activated:Connect(runListPlanks)
+listBtn.Activated:Connect(runList)
 
 copyBtn.Activated:Connect(function()
     if not setClipboard then log("!! no clipboard") return end
@@ -452,10 +609,9 @@ clearBtn.Activated:Connect(function()
     end
 end)
 
-bpBtn.Activated:Connect(function()
-    moveAxeToBackpack()
-    refreshAxeLabel()
-    log("Moved tools to Backpack.")
+waterBtn.Activated:Connect(function()
+    local n = nukeWater()
+    log("Water removed: " .. n .. " objects")
 end)
 
 stopBtn.Activated:Connect(function()
@@ -463,84 +619,23 @@ stopBtn.Activated:Connect(function()
     log("Stopped.")
 end)
 
-godBtn.Activated:Connect(function()
-    CONFIG.GODMODE = not CONFIG.GODMODE
-    if CONFIG.GODMODE then
-        godBtn.Text = "God: ON"
-        godBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 100)
-        applyGod(); log("Godmode ON.")
-    else
-        godBtn.Text = "God: OFF"
-        godBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 60)
-        stopGod(); log("Godmode OFF.")
-    end
+toBpBtn.Activated:Connect(function()
+    moveAxeToBackpack()
+    refreshAxeLabel()
+    log("Moved to Backpack.")
 end)
 
-dumpBtn.Activated:Connect(function()
-    local bp = findBackpackTool()
-    local t = bp
-    if not t then
-        -- try held
-        local c = LocalPlayer.Character
-        if c then
-            for _, d in ipairs(c:GetChildren()) do
-                if d:IsA("Tool") then t = d; break end
-            end
-        end
-    end
-    if not t then log("!! No tool to dump.") return end
-    log("=== TOOL DUMP: " .. t.Name .. " ===")
-    for _, c in ipairs(t:GetDescendants()) do
-        log(("  %s [%s]"):format(c.Name, c.ClassName))
-    end
-    log("=== END ===")
-end)
-
-valBtn.Activated:Connect(function()
-    local bp = findBackpackTool()
-    local t = bp
-    if not t then
-        local c = LocalPlayer.Character
-        if c then
-            for _, d in ipairs(c:GetChildren()) do
-                if d:IsA("Tool") then t = d; break end
-            end
-        end
-    end
-    if not t then log("!! No tool.") return end
-    log("=== VALUE DUMP: " .. t.Name .. " ===")
-    for _, c in ipairs(t:GetDescendants()) do
-        if c:IsA("StringValue") or c:IsA("NumberValue")
-           or c:IsA("IntValue") or c:IsA("BoolValue")
-           or c:IsA("ObjectValue") then
-            local ok, v = pcall(function() return c.Value end)
-            log(("  %s [%s] = %s"):format(c.Name, c.ClassName,
-                ok and tostring(v) or "?"))
-        end
-    end
-    log("=== END ===")
-end)
-
--- Quick test buttons
-local function pickBiggest(mode)
-    local planks = findAllPlanks()
-    if #planks == 0 then return end
-    table.sort(planks, function(a, b)
-        return (getSize(a) and getSize(a).Magnitude or 0) >
-               (getSize(b) and getSize(b).Magnitude or 0)
-    end)
-    testOne(planks[1], mode)
-end
-
-v_bp.Activated:Connect(function() pickBiggest("bp") end)
-v_bp2.Activated:Connect(function() pickBiggest("x5") end)
-v_both.Activated:Connect(function() pickBiggest("bp") end)
-v_range.Activated:Connect(function() pickBiggest("h_range") end)
+v_exact.Activated:Connect(testExact)
+v_sweep.Activated:Connect(testSweep)
+v_dirs.Activated:Connect(testDirs)
+v_sect.Activated:Connect(testSections)
+v_equip.Activated:Connect(testEquipped)
+v_all.Activated:Connect(testAll)
 
 -- ============================================================
 --  TAP-TO-PICK
 -- ============================================================
-local function raycastFromScreen(pos)
+local function raycast(pos)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
     local ray = cam:ViewportPointToRay(pos.X, pos.Y)
@@ -551,7 +646,7 @@ local function raycastFromScreen(pos)
     return r and r.Instance, r and r.Position or nil
 end
 
-local function findPlankNear(worldPos, radius)
+local function findNear(worldPos, radius)
     local best, bestD = nil, math.huge
     for _, p in ipairs(findAllPlanks()) do
         local ws = getWoodSection(p)
@@ -568,34 +663,37 @@ local function findPlankNear(worldPos, radius)
         end
     end
     if best and bestD <= radius then return best, bestD end
-    return nil, bestD
 end
 
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.UserInputType ~= Enum.UserInputType.MouseButton1
        and input.UserInputType ~= Enum.UserInputType.Touch then return end
-
     local pos = input.Position
     local guiObjs = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(pos.X, pos.Y)
     for _, obj in ipairs(guiObjs) do
         if obj:IsDescendantOf(sg) then return end
     end
-
-    local hit, hitPos = raycastFromScreen(pos)
+    local hit, hitPos = raycast(pos)
     if not hit then return end
     local model = hit:FindFirstAncestorOfClass("Model")
     if model and isPlank(model) then
-        log("Tapped: " .. model.Name .. " [" .. getWoodType(model) .. "]")
-        testOne(model, "bp")
+        log("Tapped: " .. getWoodType(model))
+        if busy then return end
+        busy = true
+        local ok, why = tryFire(model, 1.5217468291521072, Vector3.new(1,0,0), 1)
+        log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
+        busy = false
         return
     end
-    local nearby = findPlankNear(hitPos, CONFIG.TAP_RADIUS)
-    if nearby then
-        log("Nearby: " .. getWoodType(nearby))
-        testOne(nearby, "bp")
-    else
-        log("No plank nearby.")
+    local near = findNear(hitPos, CONFIG.TAP_RADIUS)
+    if near then
+        log("Nearby: " .. getWoodType(near))
+        if busy then return end
+        busy = true
+        local ok, why = tryFire(near, 1.5217468291521072, Vector3.new(1,0,0), 1)
+        log("  result: " .. (ok and "WORKED" or "no") .. " (" .. tostring(why) .. ")")
+        busy = false
     end
 end)
 
@@ -603,7 +701,6 @@ end)
 --  STARTUP
 -- ============================================================
 refreshAxeLabel()
-log("v13 ready. NO teleport, NO equip.")
-log("Uses the axe from your Backpack - like the game's own example.")
-log("If your axe says 'HELD', press 'To BP' to unequip it.")
-log("Then tap a plank or press 'Test: BP Tool'.")
+log("v14 ready. Water was auto-removed.")
+log("Press TRY ALL to sweep every payload variation.")
+log("Or use individual tests. Report whatever succeeds.")
