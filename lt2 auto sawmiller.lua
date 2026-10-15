@@ -1,5 +1,5 @@
--- LT2 Cut Diagnostic (with Copy Log)
--- Clicks a plank, fires ONE cut, logs everything, and can copy the log.
+-- LT2 Cut Diagnostic (with Copy Log) - Mobile + PC compatible
+-- Taps/clicks a plank, fires ONE cut, logs everything, and can copy the log.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -35,13 +35,14 @@ frame.Draggable = true
 frame.Parent = sg
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -100, 0, 30)
+title.Size = UDim2.new(1, -200, 0, 30)
 title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.BorderSizePixel = 0
-title.Text = "Cut Diagnostic - click a plank"
+title.Text = "Cut Diag - tap a plank"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
+title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = frame
 
 local copyBtn = Instance.new("TextButton")
@@ -70,7 +71,6 @@ layout.Padding = UDim.new(0, 2)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = logBox
 
--- Full log buffer kept separately so we can copy it
 local logBuffer = {}
 
 local function log(msg)
@@ -88,8 +88,21 @@ local function log(msg)
     logBox.CanvasPosition = Vector2.new(0, layout.AbsoluteContentSize.Y)
 end
 
--- Copy Log button
 copyBtn.MouseButton1Click:Connect(function()
+    if not setClipboard then
+        log("!! No clipboard function available in this executor.")
+        return
+    end
+    local text = table.concat(logBuffer, "\n")
+    local ok, err = pcall(function() setClipboard(text) end)
+    if ok then
+        log(">> Copied " .. #logBuffer .. " lines to clipboard.")
+    else
+        log("!! Copy failed: " .. tostring(err))
+    end
+end)
+-- Also support touch taps on the copy button
+copyBtn.TouchTap:Connect(function()
     if not setClipboard then
         log("!! No clipboard function available in this executor.")
         return
@@ -112,12 +125,6 @@ local function ownerMatches(model, who)
     if not o then return false end
     local ok, v = pcall(function() return o.Value end)
     return ok and v == who
-end
-
-local function dimsOf(model)
-    local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
-    if not ok then return nil end
-    return size
 end
 
 local function fmtVec(v)
@@ -146,9 +153,11 @@ local function findAxe()
 end
 
 local function snapshot(model, tag)
-    local size = dimsOf(model)
+    local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
     log(("[%s] name=%s"):format(tag, model.Name))
-    log(("[%s] size=%s"):format(tag, fmtVec(size)))
+    if ok then
+        log(("[%s] size=%s"):format(tag, fmtVec(size)))
+    end
     log(("[%s] pivot=%s"):format(tag, fmtVec(model:GetPivot().Position)))
     local kids = {}
     for _, c in ipairs(model:GetChildren()) do
@@ -162,6 +171,21 @@ local function snapshot(model, tag)
     if #attrs > 0 then
         log(("[%s] attrs: %s"):format(tag, table.concat(attrs, ", ")))
     end
+end
+
+-- ============================================================
+--  RAYCAST FROM SCREEN POSITION (works for mouse AND touch)
+-- ============================================================
+local function raycastFromScreen(pos)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local ray = cam:ViewportPointToRay(pos.X, pos.Y)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { sg, LocalPlayer.Character }
+    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
+    if result then return result.Instance end
+    return nil
 end
 
 -- ============================================================
@@ -193,7 +217,6 @@ local function runCutTest(plank)
     end
     log("CutEvent class: " .. cutEvent.ClassName .. " name: " .. cutEvent.Name)
 
-    -- Watch workspace for new children
     local beforeChildren = {}
     for _, c in ipairs(workspace:GetChildren()) do
         beforeChildren[c] = true
@@ -223,13 +246,13 @@ local function runCutTest(plank)
         cuttingClass = "Axe",
     }
     log("Firing RemoteProxy with payload:")
-    log(("   height      = %s"):format(tostring(payload.height)))
-    log(("   faceVector  = %s"):format(fmtVec(payload.faceVector)))
-    log(("   cooldown    = %s"):format(tostring(payload.cooldown)))
-    log(("   sectionId   = %s"):format(tostring(payload.sectionId)))
-    log(("   hitPoints   = %s"):format(tostring(payload.hitPoints)))
-    log(("   tool        = %s"):format(tostring(payload.tool)))
-    log(("   cuttingClass= %s"):format(tostring(payload.cuttingClass)))
+    log(("   height       = %s"):format(tostring(payload.height)))
+    log(("   faceVector   = %s"):format(fmtVec(payload.faceVector)))
+    log(("   cooldown     = %s"):format(tostring(payload.cooldown)))
+    log(("   sectionId    = %s"):format(tostring(payload.sectionId)))
+    log(("   hitPoints    = %s"):format(tostring(payload.hitPoints)))
+    log(("   tool         = %s"):format(tostring(payload.tool)))
+    log(("   cuttingClass = %s"):format(tostring(payload.cuttingClass)))
 
     local ok, err = pcall(function()
         RemoteProxy:FireServer(cutEvent, payload)
@@ -263,29 +286,44 @@ local function runCutTest(plank)
 end
 
 -- ============================================================
---  CLICK HANDLER
+--  INPUT HANDLER (mouse + touch, on both mouse and touch devices)
 -- ============================================================
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+local function handleTap(screenPos, gameProcessed)
+    if gameProcessed then return end
 
-    -- Don't trigger on GUI clicks
-    local mouse = LocalPlayer:GetMouse()
-    if mouse.Target and mouse.Target:IsDescendantOf(sg) then return end
+    -- Ignore taps inside our own GUI
+    local guiObjects = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(screenPos.X, screenPos.Y)
+    for _, obj in ipairs(guiObjects) do
+        if obj:IsDescendantOf(sg) then return end
+    end
 
-    local target = mouse.Target
-    if not target then return end
-    local model = target:FindFirstAncestorOfClass("Model")
-    if not model then return end
-
-    if not ownerMatches(model, LocalPlayer) then
-        log("Clicked " .. model.Name .. " - not yours.")
+    local hit = raycastFromScreen(screenPos)
+    if not hit then
+        log("Raycast hit nothing.")
+        return
+    end
+    local model = hit:FindFirstAncestorOfClass("Model")
+    if not model then
+        log("Hit " .. hit.Name .. " - no model ancestor.")
         return
     end
 
-    log("Clicked plank: " .. model.Name)
+    if not ownerMatches(model, LocalPlayer) then
+        log("Tapped " .. model.Name .. " - not yours.")
+        return
+    end
+
+    log("Tapped plank: " .. model.Name)
     runCutTest(model)
+end
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        handleTap(input.Position, gp)
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        handleTap(input.Position, gp)
+    end
 end)
 
-log("Ready. Click one of your planks to test a single cut.")
+log("Ready. Tap one of your planks to test a single cut.")
 log("Use 'Copy Log' to copy everything above to clipboard.")
